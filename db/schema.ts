@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const exercises = sqliteTable('exercises', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -34,3 +34,82 @@ export const coachMessages = sqliteTable('coach_messages', {
   content: text('content').notNull(),
   createdAt: text('created_at').notNull(),
 });
+
+// REPWISE v2 core. Legacy tables above are intentionally preserved so that
+// Phase 1A can ship without rewriting or deleting existing workout records.
+export const exerciseMaster = sqliteTable('exercise_master', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull().default('default'),
+  name: text('name').notNull(),
+  normalizedName: text('normalized_name').notNull(),
+  bodyPart: text('body_part').notNull(),
+  measurementType: text('measurement_type').notNull().default('weight_reps'),
+  defaultRepMin: integer('default_rep_min'),
+  defaultRepMax: integer('default_rep_max'),
+  defaultWorkingSets: integer('default_working_sets'),
+  defaultIncrementGrams: integer('default_increment_grams'),
+  defaultRestSeconds: integer('default_rest_seconds'),
+  archivedAt: text('archived_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  index('idx_exercise_master_owner_body_part').on(table.ownerId, table.bodyPart),
+  uniqueIndex('uq_exercise_master_owner_name').on(table.ownerId, table.normalizedName),
+]);
+
+export const workouts = sqliteTable('workout', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull().default('default'),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('active'),
+  localDate: text('local_date').notNull(),
+  timezone: text('timezone').notNull(),
+  startedAt: text('started_at').notNull(),
+  endedAt: text('ended_at'),
+  overallNote: text('overall_note').notNull().default(''),
+  rating: integer('rating'),
+  version: integer('version').notNull().default(1),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  deletedAt: text('deleted_at'),
+}, (table) => [
+  index('idx_workout_owner_date').on(table.ownerId, table.localDate),
+  index('idx_workout_owner_status').on(table.ownerId, table.status),
+]);
+
+export const workoutExercises = sqliteTable('workout_exercise', {
+  id: text('id').primaryKey(),
+  workoutId: text('workout_id').notNull().references(() => workouts.id, { onDelete: 'cascade' }),
+  exerciseId: text('exercise_id').notNull().references(() => exerciseMaster.id, { onDelete: 'restrict' }),
+  position: integer('position').notNull(),
+  status: text('status').notNull().default('planned'),
+  exerciseNameSnapshot: text('exercise_name_snapshot').notNull(),
+  note: text('note').notNull().default(''),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  index('idx_workout_exercise_workout_position').on(table.workoutId, table.position),
+  index('idx_workout_exercise_exercise').on(table.exerciseId),
+]);
+
+export const workoutSetsV2 = sqliteTable('workout_set', {
+  id: text('id').primaryKey(),
+  workoutExerciseId: text('workout_exercise_id').notNull().references(() => workoutExercises.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+  status: text('status').notNull().default('planned'),
+  setType: text('set_type').notNull().default('working'),
+  targetLoadGrams: integer('target_load_grams'),
+  targetRepMin: integer('target_rep_min'),
+  targetRepMax: integer('target_rep_max'),
+  actualLoadGrams: integer('actual_load_grams'),
+  actualReps: integer('actual_reps'),
+  memo: text('memo').notNull().default(''),
+  completedAt: text('completed_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  deletedAt: text('deleted_at'),
+}, (table) => [
+  index('idx_workout_set_exercise_position').on(table.workoutExerciseId, table.position),
+]);

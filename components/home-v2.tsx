@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { getWorkout, listWorkouts } from '@/lib/workouts/api-client';
 import {
   getLatestActiveWorkoutDraft,
+  listWorkoutMutations,
   markLocalWorkoutDraftCompleted,
   pruneCompletedWorkoutDrafts,
   selectWorkoutForRestore,
@@ -31,8 +32,8 @@ export function HomeV2() {
     void (async () => {
       await pruneCompletedWorkoutDrafts().catch(() => undefined);
       const [activeItems, completedItems, localDraft] = await Promise.all([
-        listWorkouts('active', 1),
-        listWorkouts('completed', 1),
+        listWorkouts('active', 1).catch(() => []),
+        listWorkouts('completed', 1).catch(() => []),
         getLatestActiveWorkoutDraft().catch(() => null),
       ]);
       let activeWorkout = activeItems[0] ?? null;
@@ -40,7 +41,14 @@ export function HomeV2() {
         const serverWorkout = await getWorkout(localDraft.workoutId).catch(
           () => null,
         );
-        const restored = selectWorkoutForRestore(serverWorkout, localDraft);
+        const queued = await listWorkoutMutations(localDraft.workoutId).catch(
+          () => [],
+        );
+        const restored = selectWorkoutForRestore(
+          serverWorkout,
+          localDraft,
+          queued.length > 0,
+        );
         if (restored.workout?.status === 'active') {
           activeWorkout = workoutToSummary(restored.workout);
         } else if (serverWorkout && serverWorkout.status !== 'active') {

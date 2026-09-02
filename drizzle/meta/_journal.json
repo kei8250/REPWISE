@@ -15,6 +15,13 @@
       "when": 1788243281709,
       "tag": "0001_gray_magma",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788333170445,
+      "tag": "0002_chilly_wallop",
+      "breakpoints": true
     }
   ]
 }

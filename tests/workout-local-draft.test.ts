@@ -4,9 +4,12 @@ import {
   closeLocalDraftDatabase,
   getLatestActiveWorkoutDraft,
   getLocalWorkoutDraft,
+  listWorkoutMutations,
   LOCAL_DRAFT_DATABASE_NAME,
   markLocalWorkoutDraftCompleted,
+  pruneCompletedWorkoutDrafts,
   saveActiveWorkoutDraft,
+  saveWorkoutDraftAndEnqueueMutation,
   selectWorkoutForRestore,
 } from '@/lib/workouts/local-drafts';
 import type {
@@ -188,6 +191,30 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     expect(result.workout?.overallNote).toBe('新しいサーバーデータ');
   });
 
+  it('未同期mutationがある場合は時刻差にかかわらずローカルを採用する', () => {
+    const serverWorkout = activeWorkout();
+    serverWorkout.updatedAt = '2026-09-02T08:10:00.000Z';
+    const localWorkout = activeWorkout();
+    localWorkout.overallNote = '同期待ちの入力';
+    const result = selectWorkoutForRestore(
+      serverWorkout,
+      {
+        workoutId: localWorkout.id,
+        schemaVersion: 1,
+        draftStatus: 'active',
+        workout: localWorkout,
+        localUpdatedAt: localTime,
+        serverUpdatedAt: serverTime,
+        serverVersion: localWorkout.version,
+        completedAt: null,
+      },
+      true,
+    );
+
+    expect(result.source).toBe('local');
+    expect(result.workout?.overallNote).toBe('同期待ちの入力');
+  });
+
   it('完了済みワークアウトを進行中として復元しない', async () => {
     const completed = activeWorkout();
     completed.status = 'completed';
@@ -202,5 +229,52 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
       workout: null,
       source: 'none',
     });
+  });
+
+  it('下書き保存とmutation登録を同じIndexedDBへFIFO順で保持する', async () => {
+    const workout = activeWorkout();
+    const created = await saveWorkoutDraftAndEnqueueMutation(
+      workout,
+      'create',
+      { serverUpdatedAt: null },
+    );
+    workout.overallNote = 'オフライン中の変更';
+    workout.updatedAt = localTime;
+    const replaced = await saveWorkoutDraftAndEnqueueMutation(
+      workout,
+      'replace',
+      { localUpdatedAt: localTime, serverUpdatedAt: null },
+    );
+
+    const queue = await listWorkoutMutations(workout.id);
+    expect(queue.map((item) => item.operation)).toEqual(['create', 'replace']);
+    expect(queue[0]).toMatchObject({
+      mutationId: created.mutation.mutationId,
+      entityType: 'workout',
+      entityId: workout.id,
+      retryCount: 0,
+      syncStatus: 'pending',
+    });
+    expect(queue[1].sequence).toBeGreaterThan(queue[0].sequence);
+    expect(queue[1].mutationId).toBe(replaced.mutation.mutationId);
+    expect(queue[1].payload.workout.overallNote).toBe('オフライン中の変更');
+    expect((await getLocalWorkoutDraft(workout.id))?.workout.overallNote).toBe(
+      'オフライン中の変更',
+    );
+  });
+
+  it('未同期の完了mutationがある下書きは保持期間を過ぎても削除しない', async () => {
+    const completed = activeWorkout();
+    completed.status = 'completed';
+    completed.endedAt = serverTime;
+    await saveWorkoutDraftAndEnqueueMutation(completed, 'complete', {
+      localUpdatedAt: serverTime,
+    });
+
+    const removed = await pruneCompletedWorkoutDrafts(
+      Date.parse(serverTime) + 8 * 24 * 60 * 60 * 1000,
+    );
+    expect(removed).toBe(0);
+    expect(await getLocalWorkoutDraft(completed.id)).not.toBeNull();
   });
 });

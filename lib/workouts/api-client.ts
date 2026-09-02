@@ -3,6 +3,8 @@ import type {
   CreateWorkoutInput,
   ExerciseMaster,
   Workout,
+  WorkoutMutationInput,
+  WorkoutMutationResult,
   WorkoutSummary,
 } from './types';
 
@@ -17,21 +19,42 @@ export class WorkoutApiError extends Error {
   }
 }
 
-export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
 
-async function request<T>(path: string, init: RequestInit = {}, fetcher: FetchLike = fetch): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  fetcher: FetchLike = fetch,
+): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
   const response = await fetcher(path, {
     ...init,
     headers,
   });
-  const body = await response.json().catch(() => null) as { error?: string; issues?: Array<{ path: string; message: string }> } | T | null;
+  const body = (await response.json().catch(() => null)) as
+    | { error?: string; issues?: Array<{ path: string; message: string }> }
+    | T
+    | null;
   if (!response.ok) {
-    const errorBody = body && typeof body === 'object' ? body as { error?: string; issues?: Array<{ path: string; message: string }> } : null;
-    throw new WorkoutApiError(errorBody?.error ?? `保存に失敗しました（${response.status}）`, response.status, errorBody?.issues ?? []);
+    const errorBody =
+      body && typeof body === 'object'
+        ? (body as {
+            error?: string;
+            issues?: Array<{ path: string; message: string }>;
+          })
+        : null;
+    throw new WorkoutApiError(
+      errorBody?.error ?? `保存に失敗しました（${response.status}）`,
+      response.status,
+      errorBody?.issues ?? [],
+    );
   }
-  if (body === null) throw new WorkoutApiError('サーバーから正しい応答がありませんでした', 502);
+  if (body === null)
+    throw new WorkoutApiError('サーバーから正しい応答がありませんでした', 502);
   return body as T;
 }
 
@@ -39,31 +62,69 @@ export function listExerciseMasters(fetcher?: FetchLike) {
   return request<ExerciseMaster[]>('/api/v2/exercises', {}, fetcher);
 }
 
-export function createExerciseMaster(input: CreateExerciseMasterInput, fetcher?: FetchLike) {
-  return request<ExerciseMaster>('/api/v2/exercises', { method: 'POST', body: JSON.stringify(input) }, fetcher);
+export function createExerciseMaster(
+  input: CreateExerciseMasterInput,
+  fetcher?: FetchLike,
+) {
+  return request<ExerciseMaster>(
+    '/api/v2/exercises',
+    { method: 'POST', body: JSON.stringify(input) },
+    fetcher,
+  );
 }
 
 export function createWorkout(input: CreateWorkoutInput, fetcher?: FetchLike) {
-  return request<Workout>('/api/v2/workouts', { method: 'POST', body: JSON.stringify(input) }, fetcher);
+  return request<Workout>(
+    '/api/v2/workouts',
+    { method: 'POST', body: JSON.stringify(input) },
+    fetcher,
+  );
 }
 
-export function listWorkouts(status?: Workout['status'], limit = 30, fetcher?: FetchLike) {
+export function listWorkouts(
+  status?: Workout['status'],
+  limit = 30,
+  fetcher?: FetchLike,
+) {
   const query = new URLSearchParams({ limit: String(limit) });
   if (status) query.set('status', status);
   return request<WorkoutSummary[]>(`/api/v2/workouts?${query}`, {}, fetcher);
 }
 
 export function getWorkout(id: string, fetcher?: FetchLike) {
-  return request<Workout>(`/api/v2/workouts/${encodeURIComponent(id)}`, {}, fetcher);
+  return request<Workout>(
+    `/api/v2/workouts/${encodeURIComponent(id)}`,
+    {},
+    fetcher,
+  );
 }
 
 export function saveWorkout(workout: Workout, fetcher?: FetchLike) {
-  return request<Workout>(`/api/v2/workouts/${encodeURIComponent(workout.id)}`, {
-    method: 'PUT',
-    body: JSON.stringify(workout),
-  }, fetcher);
+  return request<Workout>(
+    `/api/v2/workouts/${encodeURIComponent(workout.id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(workout),
+    },
+    fetcher,
+  );
 }
 
 export function finishWorkout(id: string, fetcher?: FetchLike) {
-  return request<Workout>(`/api/v2/workouts/${encodeURIComponent(id)}/complete`, { method: 'POST' }, fetcher);
+  return request<Workout>(
+    `/api/v2/workouts/${encodeURIComponent(id)}/complete`,
+    { method: 'POST' },
+    fetcher,
+  );
+}
+
+export function syncWorkoutMutation(
+  mutation: WorkoutMutationInput,
+  fetcher?: FetchLike,
+) {
+  return request<WorkoutMutationResult>(
+    '/api/v2/sync',
+    { method: 'POST', body: JSON.stringify(mutation) },
+    fetcher,
+  );
 }

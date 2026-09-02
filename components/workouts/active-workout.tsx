@@ -32,6 +32,7 @@ export function ActiveWorkout({ id }: { id: string }) {
     saveState,
     localSaveState,
     error,
+    localError,
     retry,
     complete,
   } = useActiveWorkout(id);
@@ -133,6 +134,7 @@ export function ActiveWorkout({ id }: { id: string }) {
     <div className="mx-auto min-h-screen max-w-3xl bg-background pb-28">
       <header
         data-local-save-state={localSaveState}
+        data-sync-state={saveState}
         className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur"
       >
         <div className="flex items-center justify-between gap-3">
@@ -193,6 +195,14 @@ export function ActiveWorkout({ id }: { id: string }) {
             className="rounded-xl bg-destructive/10 p-3 text-sm font-semibold text-destructive"
           >
             {finishError}
+          </p>
+        )}
+        {localError && (
+          <p
+            role="alert"
+            className="rounded-xl bg-destructive/10 p-3 text-sm font-semibold text-destructive"
+          >
+            {localError}
           </p>
         )}
         {!selected ? (
@@ -263,7 +273,7 @@ function SaveIndicator({
   error,
   onRetry,
 }: {
-  state: 'loading' | 'saved' | 'saving' | 'error';
+  state: 'loading' | 'saved' | 'saving' | 'pending' | 'error';
   error: string | null;
   onRetry: () => void;
 }) {
@@ -271,7 +281,14 @@ function SaveIndicator({
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
         <LoaderCircle className="size-3 animate-spin" />
-        保存中
+        保存中…
+      </span>
+    );
+  if (state === 'pending')
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700">
+        <CloudOff className="size-3" />
+        この端末に保存済み・同期待ち
       </span>
     );
   if (state === 'error')
@@ -283,7 +300,7 @@ function SaveIndicator({
         className="inline-flex items-center gap-1 text-[10px] font-bold text-destructive"
       >
         <CloudOff className="size-3" />
-        保存失敗・再試行
+        同期失敗・再試行
       </button>
     );
   return (

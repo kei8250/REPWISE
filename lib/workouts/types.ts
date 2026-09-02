@@ -1,5 +1,9 @@
 export type WorkoutStatus = 'draft' | 'active' | 'completed' | 'abandoned';
-export type WorkoutExerciseStatus = 'planned' | 'in_progress' | 'completed' | 'skipped';
+export type WorkoutExerciseStatus =
+  | 'planned'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped';
 export type WorkoutSetStatus = 'planned' | 'completed' | 'skipped';
 
 export interface ExerciseMaster {
@@ -88,4 +92,39 @@ export interface CreateExerciseMasterInput {
   bodyPart: string;
 }
 
-export type SaveState = 'loading' | 'saved' | 'saving' | 'error';
+export type WorkoutMutationOperation = 'create' | 'replace' | 'complete';
+export type WorkoutMutationSyncStatus =
+  | 'pending'
+  | 'syncing'
+  | 'failed'
+  | 'blocked';
+
+export interface WorkoutMutationPayload {
+  workout: Workout;
+}
+
+export interface WorkoutMutationInput {
+  mutationId: string;
+  entityType: 'workout';
+  entityId: string;
+  operation: WorkoutMutationOperation;
+  payload: WorkoutMutationPayload;
+  createdAt: string;
+}
+
+export interface WorkoutMutation extends WorkoutMutationInput {
+  sequence: number;
+  workoutId: string;
+  retryCount: number;
+  syncStatus: WorkoutMutationSyncStatus;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+}
+
+export interface WorkoutMutationResult {
+  mutationId: string;
+  duplicate: boolean;
+  workout: Workout;
+}
+
+export type SaveState = 'loading' | 'saved' | 'saving' | 'pending' | 'error';

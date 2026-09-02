@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { ArrowRight, LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { createWorkout } from '@/lib/workouts/api-client';
-import { saveActiveWorkoutDraft } from '@/lib/workouts/local-drafts';
+import { createLocalWorkout } from '@/lib/workouts/draft';
+import { saveWorkoutDraftAndEnqueueMutation } from '@/lib/workouts/local-drafts';
+import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 
 function today() {
@@ -23,16 +24,17 @@ export function StartWorkoutForm() {
     setLoading(true);
     setError(null);
     try {
-      const workout = await createWorkout({
+      const workout = createLocalWorkout({
         name,
         localDate,
         timezone:
           Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
       });
-      await saveActiveWorkoutDraft(workout, {
+      await saveWorkoutDraftAndEnqueueMutation(workout, 'create', {
         localUpdatedAt: workout.updatedAt,
-        serverUpdatedAt: workout.updatedAt,
-      }).catch(() => undefined);
+        serverUpdatedAt: null,
+      });
+      void syncPendingWorkoutMutations(workout.id).catch(() => undefined);
       navigateTo(APP_ROUTES.activeWorkout(workout.id));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '開始できませんでした');

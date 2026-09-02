@@ -1,26 +1,83 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, ChevronLeft, LoaderCircle } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, ChevronLeft, CloudOff, LoaderCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getWorkout } from '@/lib/workouts/api-client';
+import {
+  getLocalWorkoutDraft,
+  listWorkoutMutations,
+  selectWorkoutDetailForDisplay,
+} from '@/lib/workouts/local-drafts';
+import {
+  getWorkoutQueueState,
+  isBrowserOffline,
+  syncPendingWorkoutMutations,
+} from '@/lib/workouts/sync-queue';
 import type { Workout } from '@/lib/workouts/types';
 import { APP_ROUTES } from '@/lib/routes';
 
 export function WorkoutDetail({ id }: { id: string }) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<
+    'saved' | 'syncing' | 'pending' | 'error'
+  >('saved');
+  const refreshSyncState = useCallback(async () => {
+    const queue = await getWorkoutQueueState(id);
+    if (queue.blocked || (queue.failed && !isBrowserOffline())) {
+      setSyncState('error');
+    } else if (queue.syncing) {
+      setSyncState('syncing');
+    } else if (queue.total) {
+      setSyncState('pending');
+    } else {
+      setSyncState('saved');
+    }
+  }, [id]);
   useEffect(() => {
-    getWorkout(id)
-      .then(setWorkout)
-      .catch((cause) =>
+    let active = true;
+    void Promise.allSettled([
+      getWorkout(id),
+      getLocalWorkoutDraft(id),
+      listWorkoutMutations(id),
+    ]).then(([serverResult, localResult, queueResult]) => {
+      if (!active) return;
+      const server =
+        serverResult.status === 'fulfilled' ? serverResult.value : null;
+      const local =
+        localResult.status === 'fulfilled' ? localResult.value : null;
+      const queued =
+        queueResult.status === 'fulfilled' ? queueResult.value : [];
+      const selected = selectWorkoutDetailForDisplay(
+        server,
+        local,
+        queued.length > 0,
+      );
+      if (selected.workout) {
+        setWorkout(selected.workout);
+        setError(null);
+      } else {
+        const cause =
+          serverResult.status === 'rejected'
+            ? serverResult.reason
+            : new Error('記録を読み込めませんでした');
         setError(
           cause instanceof Error ? cause.message : '記録を読み込めませんでした',
-        ),
-      );
-  }, [id]);
+        );
+      }
+    });
+    const queueChanged = () => void refreshSyncState();
+    const initialQueueTimer = window.setTimeout(queueChanged, 0);
+    window.addEventListener('repwise-sync-queue-change', queueChanged);
+    return () => {
+      active = false;
+      window.clearTimeout(initialQueueTimer);
+      window.removeEventListener('repwise-sync-queue-change', queueChanged);
+    };
+  }, [id, refreshSyncState]);
   if (!workout)
     return (
       <div className="grid min-h-72 place-items-center">
@@ -43,6 +100,32 @@ export function WorkoutDetail({ id }: { id: string }) {
         <Badge variant="secondary">
           {workout.status === 'completed' ? '完了済み' : '入力途中'}
         </Badge>
+        {syncState !== 'saved' && (
+          <button
+            type="button"
+            data-sync-state={syncState}
+            onClick={() => {
+              if (syncState === 'error') {
+                setSyncState('syncing');
+                void syncPendingWorkoutMutations(id, { manual: true }).then(
+                  () => refreshSyncState(),
+                );
+              }
+            }}
+            className={`ml-2 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${syncState === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-amber-100 text-amber-800'}`}
+          >
+            {syncState === 'syncing' ? (
+              <LoaderCircle className="size-3 animate-spin" />
+            ) : (
+              <CloudOff className="size-3" />
+            )}
+            {syncState === 'error'
+              ? '同期失敗・再試行'
+              : syncState === 'syncing'
+                ? '同期中…'
+                : 'この端末に保存済み・同期待ち'}
+          </button>
+        )}
         <h1 className="mt-3 text-3xl font-black">{workout.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {workout.localDate} · {workout.exercises.length}種目

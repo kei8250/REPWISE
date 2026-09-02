@@ -1,17 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  finishWorkout,
-  getWorkout,
-  saveWorkout,
-} from '@/lib/workouts/api-client';
+import { getWorkout } from '@/lib/workouts/api-client';
 import {
   getLocalWorkoutDraft,
-  markLocalWorkoutDraftCompleted,
+  listWorkoutMutations,
   saveActiveWorkoutDraft,
+  saveWorkoutDraftAndEnqueueMutation,
   selectWorkoutForRestore,
 } from '@/lib/workouts/local-drafts';
+import {
+  getWorkoutQueueState,
+  isBrowserOffline,
+  queueStateToSaveState,
+  syncPendingWorkoutMutations,
+} from '@/lib/workouts/sync-queue';
 import type { SaveState, Workout } from '@/lib/workouts/types';
 
 export function useActiveWorkout(id: string) {
@@ -21,162 +24,180 @@ export function useActiveWorkout(id: string) {
   const [error, setError] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const workoutRef = useRef<Workout | null>(null);
-  const revisionRef = useRef(0);
-  const savedRevisionRef = useRef(0);
   const localRevisionRef = useRef(0);
-  const localUpdatedAtRef = useRef<string | null>(null);
   const serverUpdatedAtRef = useRef<string | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
 
-  const persistLocal = useCallback(
-    async (
-      snapshot: Workout,
-      localUpdatedAt = new Date().toISOString(),
-      serverUpdatedAt = serverUpdatedAtRef.current,
-    ) => {
-      const localRevision = localRevisionRef.current + 1;
-      localRevisionRef.current = localRevision;
-      localUpdatedAtRef.current = localUpdatedAt;
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  const refreshSyncState = useCallback(async () => {
+    const queue = await getWorkoutQueueState(id);
+    if (!mountedRef.current) return queue;
+    const state = queueStateToSaveState(queue);
+    setSaveState(state);
+    if (state === 'error') {
+      setError(queue.lastError ?? '同期に失敗しました');
+    } else {
+      setError(null);
+    }
+    return queue;
+  }, [id]);
+
+  const scheduleSync = useCallback(
+    (delay = 80) => {
+      clearRetryTimer();
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        void syncPendingWorkoutMutations(id)
+          .then(async () => {
+            await refreshSyncState();
+          })
+          .catch(() => refreshSyncState());
+      }, delay);
+    },
+    [clearRetryTimer, id, refreshSyncState],
+  );
+
+  const persistLocalMutation = useCallback(
+    async (snapshot: Workout, operation: 'replace' | 'complete') => {
+      const revision = localRevisionRef.current + 1;
+      localRevisionRef.current = revision;
       setLocalSaveState('saving');
       setLocalError(null);
+      setSaveState(isBrowserOffline() ? 'pending' : 'saving');
       try {
-        const record = await saveActiveWorkoutDraft(snapshot, {
-          localUpdatedAt,
-          serverUpdatedAt,
+        await saveWorkoutDraftAndEnqueueMutation(snapshot, operation, {
+          localUpdatedAt: snapshot.updatedAt,
+          serverUpdatedAt: serverUpdatedAtRef.current,
         });
-        if (localRevisionRef.current === localRevision) {
+        if (mountedRef.current && localRevisionRef.current === revision) {
           setLocalSaveState('saved');
         }
-        return record;
+        scheduleSync();
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : 'ローカル保存に失敗しました';
-        setLocalError(message);
-        setLocalSaveState('error');
+        if (mountedRef.current) {
+          setLocalError(message);
+          setLocalSaveState('error');
+          setSaveState('error');
+          setError(message);
+        }
         throw cause;
       }
     },
-    [],
+    [scheduleSync],
   );
 
   const setWorkout = useCallback(
     (updater: Workout | ((current: Workout) => Workout)) => {
       const current = workoutRef.current;
-      if (!current) return;
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      const localUpdatedAt = new Date().toISOString();
+      if (!current || current.status !== 'active') return;
+      const nextValue =
+        typeof updater === 'function' ? updater(current) : updater;
+      const next = { ...nextValue, updatedAt: new Date().toISOString() };
       workoutRef.current = next;
-      revisionRef.current += 1;
       setWorkoutState(next);
-      setSaveState('saving');
-      setError(null);
-      void persistLocal(next, localUpdatedAt).catch(() => undefined);
+      void persistLocalMutation(next, 'replace').catch(() => undefined);
     },
-    [persistLocal],
+    [persistLocalMutation],
   );
 
-  const persist = useCallback(async () => {
-    const snapshot = workoutRef.current;
-    if (!snapshot) throw new Error('保存するワークアウトがありません');
-    const revision = revisionRef.current;
-    const localUpdatedAt =
-      localUpdatedAtRef.current ?? new Date().toISOString();
-    setSaveState('saving');
-    try {
-      const saved = await saveWorkout(snapshot);
-      savedRevisionRef.current = revision;
-      serverUpdatedAtRef.current = saved.updatedAt;
-      setWorkoutState((current) => {
-        if (!current || revisionRef.current !== revision) return current;
-        workoutRef.current = saved;
-        return saved;
-      });
-      if (revisionRef.current === revision) {
-        setSaveState('saved');
-        await persistLocal(saved, localUpdatedAt, saved.updatedAt).catch(
-          () => undefined,
-        );
-      }
-      setError(null);
-      return saved;
-    } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : '保存に失敗しました';
-      setError(message);
-      setSaveState('error');
-      throw cause;
-    }
-  }, [persistLocal]);
-
   useEffect(() => {
+    mountedRef.current = true;
     let alive = true;
-    void Promise.allSettled([getWorkout(id), getLocalWorkoutDraft(id)]).then(
-      async ([serverResult, localResult]) => {
-        if (!alive) return;
-        const serverWorkout =
-          serverResult.status === 'fulfilled' ? serverResult.value : null;
-        const localDraft =
-          localResult.status === 'fulfilled' ? localResult.value : null;
-        const restored = selectWorkoutForRestore(serverWorkout, localDraft);
-        if (!restored.workout) {
-          const cause =
-            serverResult.status === 'rejected'
-              ? serverResult.reason
-              : new Error('ワークアウトを読み込めませんでした');
-          setError(
-            cause instanceof Error ? cause.message : '読み込みに失敗しました',
-          );
-          setSaveState('error');
-          setLocalSaveState(localDraft ? 'saved' : 'error');
-          return;
-        }
-
-        const loaded = restored.workout;
-        workoutRef.current = loaded;
-        serverUpdatedAtRef.current = serverWorkout?.updatedAt ?? null;
-        localUpdatedAtRef.current =
-          restored.source === 'local'
-            ? (localDraft?.localUpdatedAt ?? loaded.updatedAt)
-            : loaded.updatedAt;
-        revisionRef.current = restored.source === 'local' ? 1 : 0;
-        savedRevisionRef.current = 0;
-        setWorkoutState(loaded);
-        setSaveState(
-          restored.source === 'local' && serverWorkout ? 'saving' : 'saved',
+    void Promise.allSettled([
+      getWorkout(id),
+      getLocalWorkoutDraft(id),
+      listWorkoutMutations(id),
+    ]).then(async ([serverResult, localResult, queueResult]) => {
+      if (!alive) return;
+      const serverWorkout =
+        serverResult.status === 'fulfilled' ? serverResult.value : null;
+      const localDraft =
+        localResult.status === 'fulfilled' ? localResult.value : null;
+      const queued =
+        queueResult.status === 'fulfilled' ? queueResult.value : [];
+      const restored = selectWorkoutForRestore(
+        serverWorkout,
+        localDraft,
+        queued.length > 0,
+      );
+      if (!restored.workout) {
+        const cause =
+          serverResult.status === 'rejected'
+            ? serverResult.reason
+            : new Error('ワークアウトを読み込めませんでした');
+        setError(
+          cause instanceof Error ? cause.message : '読み込みに失敗しました',
         );
-        setLocalSaveState('saved');
-        setError(null);
-        setLocalError(null);
+        setSaveState('error');
+        setLocalSaveState(localDraft ? 'saved' : 'error');
+        return;
+      }
 
-        if (loaded.status === 'active') {
-          await persistLocal(
-            loaded,
-            localUpdatedAtRef.current,
-            serverUpdatedAtRef.current,
-          ).catch(() => undefined);
-        } else {
-          await markLocalWorkoutDraftCompleted(loaded).catch(() => undefined);
-        }
-      },
-    );
+      const loaded = restored.workout;
+      workoutRef.current = loaded;
+      serverUpdatedAtRef.current = serverWorkout?.updatedAt ?? null;
+      setWorkoutState(loaded);
+      setLocalSaveState('saved');
+      setLocalError(null);
+
+      if (
+        restored.source === 'local' &&
+        loaded.status === 'active' &&
+        queued.length === 0
+      ) {
+        // Upgrade a Phase 1B-1a-only draft into the durable retry pipeline.
+        await saveWorkoutDraftAndEnqueueMutation(loaded, 'replace', {
+          localUpdatedAt: localDraft?.localUpdatedAt ?? loaded.updatedAt,
+          serverUpdatedAt: serverWorkout?.updatedAt ?? null,
+        });
+      } else if (restored.source === 'server' && loaded.status === 'active') {
+        await saveActiveWorkoutDraft(loaded, {
+          localUpdatedAt: loaded.updatedAt,
+          serverUpdatedAt: loaded.updatedAt,
+        });
+      }
+      await refreshSyncState();
+      scheduleSync();
+    });
     return () => {
       alive = false;
+      mountedRef.current = false;
+      clearRetryTimer();
     };
-  }, [id, persistLocal]);
+  }, [clearRetryTimer, id, refreshSyncState, scheduleSync]);
 
   useEffect(() => {
-    if (!workout || revisionRef.current === savedRevisionRef.current) return;
-    const timer = window.setTimeout(() => {
-      void persist().catch(() => undefined);
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [persist, workout]);
+    const queueChanged = () => void refreshSyncState();
+    const online = () => {
+      void refreshSyncState();
+      scheduleSync(0);
+    };
+    const offline = () => void refreshSyncState();
+    window.addEventListener('repwise-sync-queue-change', queueChanged);
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
+    return () => {
+      window.removeEventListener('repwise-sync-queue-change', queueChanged);
+      window.removeEventListener('online', online);
+      window.removeEventListener('offline', offline);
+    };
+  }, [refreshSyncState, scheduleSync]);
 
   useEffect(() => {
     const flushLatestLocalSnapshot = () => {
       const snapshot = workoutRef.current;
       if (!snapshot || snapshot.status !== 'active') return;
       void saveActiveWorkoutDraft(snapshot, {
-        localUpdatedAt: localUpdatedAtRef.current ?? new Date().toISOString(),
+        localUpdatedAt: snapshot.updatedAt,
         serverUpdatedAt: serverUpdatedAtRef.current,
       }).catch(() => undefined);
     };
@@ -191,27 +212,41 @@ export function useActiveWorkout(id: string) {
     };
   }, []);
 
-  const complete = useCallback(async () => {
-    if (revisionRef.current !== savedRevisionRef.current) await persist();
-    const completed = await finishWorkout(id);
-    workoutRef.current = completed;
-    serverUpdatedAtRef.current = completed.updatedAt;
-    setWorkoutState(completed);
-    setSaveState('saved');
-    try {
-      await markLocalWorkoutDraftCompleted(completed);
-      setLocalSaveState('saved');
-      setLocalError(null);
-    } catch (cause) {
-      setLocalSaveState('error');
-      setLocalError(
-        cause instanceof Error
-          ? cause.message
-          : '完了状態をローカル保存できませんでした',
-      );
+  const retry = useCallback(async () => {
+    if (!workoutRef.current) {
+      window.location.reload();
+      return;
     }
+    clearRetryTimer();
+    setSaveState('saving');
+    await syncPendingWorkoutMutations(id, { manual: true });
+    await refreshSyncState();
+  }, [clearRetryTimer, id, refreshSyncState]);
+
+  const complete = useCallback(async () => {
+    const current = workoutRef.current;
+    if (!current) throw new Error('終了するワークアウトがありません');
+    if (!current.exercises.length)
+      throw new Error('種目を1つ以上追加してください');
+    if (
+      !current.exercises
+        .flatMap((exercise) => exercise.sets)
+        .some((set) => set.status === 'completed')
+    ) {
+      throw new Error('完了したセットを1つ以上記録してください');
+    }
+    const endedAt = new Date().toISOString();
+    const completed: Workout = {
+      ...current,
+      status: 'completed',
+      endedAt,
+      updatedAt: endedAt,
+    };
+    workoutRef.current = completed;
+    setWorkoutState(completed);
+    await persistLocalMutation(completed, 'complete');
     return completed;
-  }, [id, persist]);
+  }, [persistLocalMutation]);
 
   return {
     workout,
@@ -220,7 +255,7 @@ export function useActiveWorkout(id: string) {
     localSaveState,
     error,
     localError,
-    retry: persist,
+    retry,
     complete,
   };
 }

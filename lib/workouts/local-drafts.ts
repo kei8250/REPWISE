@@ -1,8 +1,18 @@
-import type { Workout, WorkoutSummary } from './types';
+import type {
+  ExerciseMaster,
+  Workout,
+  WorkoutMutation,
+  WorkoutMutationOperation,
+  WorkoutMutationSyncStatus,
+  WorkoutSummary,
+} from './types';
 
 export const LOCAL_DRAFT_DATABASE_NAME = 'repwise-local';
 export const LOCAL_DRAFT_STORE_NAME = 'workoutDrafts';
+export const WORKOUT_MUTATION_STORE_NAME = 'workoutMutationQueue';
+export const EXERCISE_MASTER_CACHE_STORE_NAME = 'exerciseMasterCache';
 export const LOCAL_DRAFT_SCHEMA_VERSION = 1;
+export const LOCAL_DATABASE_VERSION = 2;
 export const COMPLETED_DRAFT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type LocalDraftStatus = 'active' | 'completed';
@@ -24,6 +34,7 @@ export type WorkoutRestoreResult = {
 };
 
 const databases = new Map<string, Promise<IDBDatabase>>();
+let lastMutationSequence = 0;
 
 function getIndexedDb() {
   if (typeof indexedDB === 'undefined') {
@@ -37,18 +48,33 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
   if (cached) return cached;
 
   const opening = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = getIndexedDb().open(
-      databaseName,
-      LOCAL_DRAFT_SCHEMA_VERSION,
-    );
+    const request = getIndexedDb().open(databaseName, LOCAL_DATABASE_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (database.objectStoreNames.contains(LOCAL_DRAFT_STORE_NAME)) return;
-      const store = database.createObjectStore(LOCAL_DRAFT_STORE_NAME, {
-        keyPath: 'workoutId',
-      });
-      store.createIndex('draftStatus', 'draftStatus', { unique: false });
-      store.createIndex('localUpdatedAt', 'localUpdatedAt', { unique: false });
+      if (!database.objectStoreNames.contains(LOCAL_DRAFT_STORE_NAME)) {
+        const store = database.createObjectStore(LOCAL_DRAFT_STORE_NAME, {
+          keyPath: 'workoutId',
+        });
+        store.createIndex('draftStatus', 'draftStatus', { unique: false });
+        store.createIndex('localUpdatedAt', 'localUpdatedAt', {
+          unique: false,
+        });
+      }
+      if (!database.objectStoreNames.contains(WORKOUT_MUTATION_STORE_NAME)) {
+        const store = database.createObjectStore(WORKOUT_MUTATION_STORE_NAME, {
+          keyPath: 'mutationId',
+        });
+        store.createIndex('sequence', 'sequence', { unique: true });
+        store.createIndex('workoutId', 'workoutId', { unique: false });
+        store.createIndex('syncStatus', 'syncStatus', { unique: false });
+      }
+      if (
+        !database.objectStoreNames.contains(EXERCISE_MASTER_CACHE_STORE_NAME)
+      ) {
+        database.createObjectStore(EXERCISE_MASTER_CACHE_STORE_NAME, {
+          keyPath: 'key',
+        });
+      }
     };
     request.onsuccess = () => {
       const database = request.result;
@@ -66,6 +92,61 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
   databases.set(databaseName, opening);
   opening.catch(() => databases.delete(databaseName));
   return opening;
+}
+
+function notifyQueueChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('repwise-sync-queue-change'));
+  }
+}
+
+function nextMutationSequence() {
+  const base = Date.now() * 1000;
+  lastMutationSequence = Math.max(base, lastMutationSequence + 1);
+  return lastMutationSequence;
+}
+
+function createDraftRecord(
+  workout: Workout,
+  draftStatus: LocalDraftStatus,
+  options: { localUpdatedAt?: string; serverUpdatedAt?: string | null } = {},
+): LocalWorkoutDraft {
+  const timestamp = options.localUpdatedAt ?? new Date().toISOString();
+  return {
+    workoutId: workout.id,
+    schemaVersion: LOCAL_DRAFT_SCHEMA_VERSION,
+    draftStatus,
+    workout: structuredClone(workout),
+    localUpdatedAt: timestamp,
+    serverUpdatedAt:
+      'serverUpdatedAt' in options
+        ? (options.serverUpdatedAt ?? null)
+        : (workout.updatedAt ?? null),
+    serverVersion: workout.version ?? null,
+    completedAt:
+      draftStatus === 'completed' ? (workout.endedAt ?? timestamp) : null,
+  };
+}
+
+function createMutationRecord(
+  workout: Workout,
+  operation: WorkoutMutationOperation,
+  createdAt: string,
+): WorkoutMutation {
+  return {
+    mutationId: crypto.randomUUID(),
+    entityType: 'workout',
+    entityId: workout.id,
+    workoutId: workout.id,
+    operation,
+    payload: { workout: structuredClone(workout) },
+    createdAt,
+    sequence: nextMutationSequence(),
+    retryCount: 0,
+    syncStatus: 'pending',
+    lastAttemptAt: null,
+    lastError: null,
+  };
 }
 
 function requestResult<T>(request: IDBRequest<T>) {
@@ -110,19 +191,174 @@ export async function saveActiveWorkoutDraft(
   const database = await openDatabase(options.databaseName);
   const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
   const complete = transactionComplete(transaction);
-  const record: LocalWorkoutDraft = {
-    workoutId: workout.id,
-    schemaVersion: LOCAL_DRAFT_SCHEMA_VERSION,
-    draftStatus: 'active',
-    workout: structuredClone(workout),
-    localUpdatedAt: options.localUpdatedAt ?? new Date().toISOString(),
-    serverUpdatedAt: options.serverUpdatedAt ?? workout.updatedAt ?? null,
-    serverVersion: workout.version ?? null,
-    completedAt: null,
-  };
+  const record = createDraftRecord(workout, 'active', options);
   transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(record);
   await complete;
   return record;
+}
+
+export async function saveWorkoutDraftAndEnqueueMutation(
+  workout: Workout,
+  operation: WorkoutMutationOperation,
+  options: {
+    localUpdatedAt?: string;
+    serverUpdatedAt?: string | null;
+    databaseName?: string;
+  } = {},
+) {
+  const database = await openDatabase(options.databaseName);
+  const transaction = database.transaction(
+    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME],
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const localUpdatedAt = options.localUpdatedAt ?? new Date().toISOString();
+  const draft = createDraftRecord(
+    workout,
+    operation === 'complete' ? 'completed' : 'active',
+    { ...options, localUpdatedAt },
+  );
+  const mutation = createMutationRecord(workout, operation, localUpdatedAt);
+  transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(draft);
+  transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).put(mutation);
+  await complete;
+  notifyQueueChanged();
+  return { draft, mutation };
+}
+
+function isWorkoutMutation(value: unknown): value is WorkoutMutation {
+  if (!value || typeof value !== 'object') return false;
+  const mutation = value as Partial<WorkoutMutation>;
+  return (
+    typeof mutation.mutationId === 'string' &&
+    mutation.entityType === 'workout' &&
+    typeof mutation.entityId === 'string' &&
+    typeof mutation.workoutId === 'string' &&
+    ['create', 'replace', 'complete'].includes(mutation.operation ?? '') &&
+    typeof mutation.createdAt === 'string' &&
+    typeof mutation.sequence === 'number' &&
+    typeof mutation.retryCount === 'number' &&
+    ['pending', 'syncing', 'failed', 'blocked'].includes(
+      mutation.syncStatus ?? '',
+    ) &&
+    !!mutation.payload?.workout
+  );
+}
+
+export async function listWorkoutMutations(
+  workoutId?: string,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    WORKOUT_MUTATION_STORE_NAME,
+    'readonly',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const values = workoutId
+    ? await requestResult(store.index('workoutId').getAll(workoutId))
+    : await requestResult(store.getAll());
+  await complete;
+  return values
+    .filter(isWorkoutMutation)
+    .sort((a, b) => a.sequence - b.sequence);
+}
+
+export async function updateWorkoutMutation(
+  mutationId: string,
+  values: Partial<
+    Pick<
+      WorkoutMutation,
+      'syncStatus' | 'retryCount' | 'lastAttemptAt' | 'lastError'
+    >
+  >,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    WORKOUT_MUTATION_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const current = await requestResult(store.get(mutationId));
+  if (isWorkoutMutation(current)) store.put({ ...current, ...values });
+  await complete;
+  notifyQueueChanged();
+}
+
+export async function resetBlockedWorkoutMutations(
+  workoutId: string,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const mutations = await listWorkoutMutations(workoutId, databaseName);
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    WORKOUT_MUTATION_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  for (const mutation of mutations) {
+    if (mutation.syncStatus === 'blocked') {
+      store.put({
+        ...mutation,
+        syncStatus: 'pending' satisfies WorkoutMutationSyncStatus,
+        lastError: null,
+      });
+    }
+  }
+  await complete;
+  notifyQueueChanged();
+}
+
+export async function acknowledgeWorkoutMutation(
+  mutation: WorkoutMutation,
+  serverWorkout: Workout,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME],
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  queue.delete(mutation.mutationId);
+  const currentRequest = drafts.get(mutation.workoutId);
+  const remainingRequest = queue.index('workoutId').getAll(mutation.workoutId);
+  const current = await requestResult(currentRequest);
+  const remaining = (await requestResult(remainingRequest)).filter(
+    isWorkoutMutation,
+  );
+  if (isLocalWorkoutDraft(current)) {
+    const hasLaterMutation = remaining.some(
+      (queued) => queued.sequence > mutation.sequence,
+    );
+    const isLatestSnapshot =
+      !hasLaterMutation && current.localUpdatedAt <= mutation.createdAt;
+    const syncedWorkout = isLatestSnapshot
+      ? structuredClone(serverWorkout)
+      : current.workout;
+    drafts.put({
+      ...current,
+      workout: syncedWorkout,
+      draftStatus:
+        syncedWorkout.status === 'completed'
+          ? 'completed'
+          : current.draftStatus,
+      completedAt:
+        syncedWorkout.status === 'completed'
+          ? (syncedWorkout.endedAt ?? current.completedAt)
+          : current.completedAt,
+      serverUpdatedAt: serverWorkout.updatedAt,
+      serverVersion: serverWorkout.version,
+    } satisfies LocalWorkoutDraft);
+  }
+  await complete;
+  notifyQueueChanged();
 }
 
 export async function getLocalWorkoutDraft(
@@ -169,16 +405,10 @@ export async function markLocalWorkoutDraftCompleted(
   const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
   const complete = transactionComplete(transaction);
   const timestamp = options.localUpdatedAt ?? new Date().toISOString();
-  const record: LocalWorkoutDraft = {
-    workoutId: workout.id,
-    schemaVersion: LOCAL_DRAFT_SCHEMA_VERSION,
-    draftStatus: 'completed',
-    workout: structuredClone(workout),
+  const record = createDraftRecord(workout, 'completed', {
     localUpdatedAt: timestamp,
     serverUpdatedAt: workout.updatedAt,
-    serverVersion: workout.version,
-    completedAt: workout.endedAt ?? timestamp,
-  };
+  });
   transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(record);
   await complete;
   return record;
@@ -190,16 +420,27 @@ export async function pruneCompletedWorkoutDrafts(
   databaseName = LOCAL_DRAFT_DATABASE_NAME,
 ) {
   const database = await openDatabase(databaseName);
-  const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
+  const transaction = database.transaction(
+    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME],
+    'readwrite',
+  );
   const complete = transactionComplete(transaction);
   const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
   const values = await requestResult(store.getAll());
   let removed = 0;
   for (const value of values) {
     if (!isLocalWorkoutDraft(value) || value.draftStatus !== 'completed')
       continue;
     const completedAt = Date.parse(value.completedAt ?? value.localUpdatedAt);
-    if (Number.isFinite(completedAt) && now - completedAt >= retentionMs) {
+    const pending = await requestResult(
+      queue.index('workoutId').getAll(value.workoutId),
+    );
+    if (
+      !pending.length &&
+      Number.isFinite(completedAt) &&
+      now - completedAt >= retentionMs
+    ) {
       store.delete(value.workoutId);
       removed += 1;
     }
@@ -208,9 +449,67 @@ export async function pruneCompletedWorkoutDrafts(
   return removed;
 }
 
+export function selectWorkoutDetailForDisplay(
+  serverWorkout: Workout | null,
+  localDraft: LocalWorkoutDraft | null,
+  hasPendingMutations = false,
+): WorkoutRestoreResult {
+  if (!localDraft) {
+    return serverWorkout
+      ? { workout: serverWorkout, source: 'server' }
+      : { workout: null, source: 'none' };
+  }
+  if (!serverWorkout) return { workout: localDraft.workout, source: 'local' };
+  if (hasPendingMutations)
+    return { workout: localDraft.workout, source: 'local' };
+  const localUpdatedAt = Date.parse(localDraft.localUpdatedAt);
+  const serverUpdatedAt = Date.parse(serverWorkout.updatedAt);
+  if (Number.isFinite(localUpdatedAt) && localUpdatedAt >= serverUpdatedAt) {
+    return { workout: localDraft.workout, source: 'local' };
+  }
+  return { workout: serverWorkout, source: 'server' };
+}
+
+export async function saveExerciseMasterCache(
+  exercises: ExerciseMaster[],
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    EXERCISE_MASTER_CACHE_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  transaction.objectStore(EXERCISE_MASTER_CACHE_STORE_NAME).put({
+    key: 'all',
+    exercises: structuredClone(exercises),
+    updatedAt: new Date().toISOString(),
+  });
+  await complete;
+}
+
+export async function getExerciseMasterCache(
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    EXERCISE_MASTER_CACHE_STORE_NAME,
+    'readonly',
+  );
+  const complete = transactionComplete(transaction);
+  const value = (await requestResult(
+    transaction.objectStore(EXERCISE_MASTER_CACHE_STORE_NAME).get('all'),
+  )) as { exercises?: unknown } | undefined;
+  await complete;
+  return Array.isArray(value?.exercises)
+    ? (value.exercises as ExerciseMaster[])
+    : [];
+}
+
 export function selectWorkoutForRestore(
   serverWorkout: Workout | null,
   localDraft: LocalWorkoutDraft | null,
+  hasPendingMutations = false,
 ): WorkoutRestoreResult {
   if (serverWorkout && serverWorkout.status !== 'active') {
     return { workout: serverWorkout, source: 'server' };
@@ -225,6 +524,8 @@ export function selectWorkoutForRestore(
       : { workout: null, source: 'none' };
   }
   if (!serverWorkout) return { workout: localDraft.workout, source: 'local' };
+  if (hasPendingMutations)
+    return { workout: localDraft.workout, source: 'local' };
 
   const localUpdatedAt = Date.parse(localDraft.localUpdatedAt);
   const serverUpdatedAt = Date.parse(serverWorkout.updatedAt);

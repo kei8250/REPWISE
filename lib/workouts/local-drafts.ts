@@ -219,8 +219,27 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     { ...options, localUpdatedAt },
   );
   const mutation = createMutationRecord(workout, operation, localUpdatedAt);
-  transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(draft);
-  transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).put(mutation);
+  const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const supersededRequest =
+    operation === 'replace'
+      ? queue.index('workoutId').getAll(workout.id)
+      : null;
+  drafts.put(draft);
+  if (supersededRequest) {
+    const superseded = await requestResult(supersededRequest);
+    for (const value of superseded) {
+      if (
+        isWorkoutMutation(value) &&
+        value.operation === 'replace' &&
+        value.syncStatus === 'pending' &&
+        value.retryCount === 0
+      ) {
+        queue.delete(value.mutationId);
+      }
+    }
+  }
+  queue.put(mutation);
   await complete;
   notifyQueueChanged();
   return { draft, mutation };

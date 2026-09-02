@@ -263,6 +263,19 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     );
   });
 
+  it('未送信・未試行のreplaceだけを最新スナップショットへ集約する', async () => {
+    const workout = activeWorkout();
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'create');
+    workout.overallNote = '古い未送信入力';
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+    workout.overallNote = '最新の未送信入力';
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+
+    const queue = await listWorkoutMutations(workout.id);
+    expect(queue.map((item) => item.operation)).toEqual(['create', 'replace']);
+    expect(queue[1].payload.workout.overallNote).toBe('最新の未送信入力');
+  });
+
   it('未同期の完了mutationがある下書きは保持期間を過ぎても削除しない', async () => {
     const completed = activeWorkout();
     completed.status = 'completed';

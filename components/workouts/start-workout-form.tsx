@@ -5,6 +5,7 @@ import { ArrowRight, LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createWorkout } from '@/lib/workouts/api-client';
+import { saveActiveWorkoutDraft } from '@/lib/workouts/local-drafts';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 
 function today() {
@@ -28,6 +29,10 @@ export function StartWorkoutForm() {
         timezone:
           Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
       });
+      await saveActiveWorkoutDraft(workout, {
+        localUpdatedAt: workout.updatedAt,
+        serverUpdatedAt: workout.updatedAt,
+      }).catch(() => undefined);
       navigateTo(APP_ROUTES.activeWorkout(workout.id));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '開始できませんでした');

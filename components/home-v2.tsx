@@ -11,7 +11,14 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { listWorkouts } from '@/lib/workouts/api-client';
+import { getWorkout, listWorkouts } from '@/lib/workouts/api-client';
+import {
+  getLatestActiveWorkoutDraft,
+  markLocalWorkoutDraftCompleted,
+  pruneCompletedWorkoutDrafts,
+  selectWorkoutForRestore,
+  workoutToSummary,
+} from '@/lib/workouts/local-drafts';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { APP_ROUTES, workoutRoute } from '@/lib/routes';
 
@@ -20,13 +27,39 @@ export function HomeV2() {
   const [recent, setRecent] = useState<WorkoutSummary | null>(null);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    void Promise.all([listWorkouts('active', 1), listWorkouts('completed', 1)])
-      .then(([activeItems, completedItems]) => {
-        setActive(activeItems[0] ?? null);
-        setRecent(completedItems[0] ?? null);
-      })
+    let mounted = true;
+    void (async () => {
+      await pruneCompletedWorkoutDrafts().catch(() => undefined);
+      const [activeItems, completedItems, localDraft] = await Promise.all([
+        listWorkouts('active', 1),
+        listWorkouts('completed', 1),
+        getLatestActiveWorkoutDraft().catch(() => null),
+      ]);
+      let activeWorkout = activeItems[0] ?? null;
+      if (localDraft) {
+        const serverWorkout = await getWorkout(localDraft.workoutId).catch(
+          () => null,
+        );
+        const restored = selectWorkoutForRestore(serverWorkout, localDraft);
+        if (restored.workout?.status === 'active') {
+          activeWorkout = workoutToSummary(restored.workout);
+        } else if (serverWorkout && serverWorkout.status !== 'active') {
+          await markLocalWorkoutDraftCompleted(serverWorkout).catch(
+            () => undefined,
+          );
+        }
+      }
+      if (!mounted) return;
+      setActive(activeWorkout);
+      setRecent(completedItems[0] ?? null);
+    })()
       .catch(() => undefined)
-      .finally(() => setLoaded(true));
+      .finally(() => {
+        if (mounted) setLoaded(true);
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
   return (
     <div className="space-y-5 p-4 sm:p-7 lg:p-10">

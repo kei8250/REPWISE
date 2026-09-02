@@ -26,8 +26,15 @@ import { ExercisePicker } from './exercise-picker';
 import { WorkoutExercise } from './workout-exercise';
 
 export function ActiveWorkout({ id }: { id: string }) {
-  const { workout, setWorkout, saveState, error, retry, complete } =
-    useActiveWorkout(id);
+  const {
+    workout,
+    setWorkout,
+    saveState,
+    localSaveState,
+    error,
+    retry,
+    complete,
+  } = useActiveWorkout(id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
@@ -124,7 +131,10 @@ export function ActiveWorkout({ id }: { id: string }) {
 
   return (
     <div className="mx-auto min-h-screen max-w-3xl bg-background pb-28">
-      <header className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur">
+      <header
+        data-local-save-state={localSaveState}
+        className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur"
+      >
         <div className="flex items-center justify-between gap-3">
           <Button
             type="button"

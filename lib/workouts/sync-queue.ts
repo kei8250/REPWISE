@@ -54,7 +54,16 @@ export function isPermanentSyncError(error: unknown) {
 }
 
 export function isBrowserOffline() {
-  return typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (typeof navigator === 'undefined') return false;
+  if (navigator.onLine === false) return true;
+  // Review-only deterministic network interruption for browser E2E. The
+  // hostname guard prevents this switch from changing production behavior.
+  return (
+    typeof window !== 'undefined' &&
+    window.location.hostname ===
+      'repwise-phase1a-review.keikei8250.chatgpt.site' &&
+    new URLSearchParams(window.location.search).has('repwise-offline-test')
+  );
 }
 
 export function queueStateToSaveState(

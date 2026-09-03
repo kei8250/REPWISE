@@ -167,7 +167,7 @@ export function CompletedWorkoutEditor({
         <Plus /> 種目を追加
       </Button>
 
-      <div className="sticky bottom-4 grid grid-cols-2 gap-3 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur">
+      <div className="sticky bottom-20 grid grid-cols-2 gap-3 rounded-2xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:bottom-4">
         <Button
           type="button"
           variant="outline"

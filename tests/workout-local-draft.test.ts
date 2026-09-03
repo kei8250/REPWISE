@@ -304,6 +304,27 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     ]);
   });
 
+  it('UIスナップショットの古いversionで認識済みserver versionを巻き戻さない', async () => {
+    const serverWorkout = activeWorkout();
+    serverWorkout.version = 5;
+    await saveActiveWorkoutDraft(serverWorkout, {
+      serverUpdatedAt: serverWorkout.updatedAt,
+    });
+
+    const localSnapshot = structuredClone(serverWorkout);
+    localSnapshot.version = 1;
+    localSnapshot.overallNote = '同期後に続けて入力';
+    const { mutation } = await saveWorkoutDraftAndEnqueueMutation(
+      localSnapshot,
+      'replace',
+    );
+
+    expect(mutation.baseVersion).toBe(5);
+    expect((await getLocalWorkoutDraft(localSnapshot.id))?.serverVersion).toBe(
+      5,
+    );
+  });
+
   it('未同期の完了mutationがある下書きは保持期間を過ぎても削除しない', async () => {
     const completed = activeWorkout();
     completed.status = 'completed';

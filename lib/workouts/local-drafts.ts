@@ -273,6 +273,10 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const currentDraft = isLocalWorkoutDraft(currentDraftValue)
     ? currentDraftValue
     : null;
+  if (currentDraft) {
+    draft.serverUpdatedAt = currentDraft.serverUpdatedAt;
+    draft.serverVersion = currentDraft.serverVersion;
+  }
   const baseVersion =
     operation === 'create'
       ? 0

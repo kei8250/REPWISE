@@ -42,6 +42,7 @@ import {
 import type { Workout } from '@/lib/workouts/types';
 import { APP_ROUTES } from '@/lib/routes';
 import { CompletedWorkoutEditor } from './completed-workout-editor';
+import { ReviewConflictControl } from './review-conflict-control';
 
 type DetailSyncState = 'saved' | 'syncing' | 'pending' | 'error' | 'conflict';
 
@@ -372,6 +373,8 @@ export function WorkoutDetail({ id }: { id: string }) {
               </>
             )}
           </div>
+
+          <ReviewConflictControl workoutId={workout.id} />
 
           {syncState === 'conflict' && (
             <div

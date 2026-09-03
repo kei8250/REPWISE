@@ -19,8 +19,10 @@ export type WorkoutQueueState = {
   syncing: number;
   failed: number;
   blocked: number;
+  conflict: number;
   retryCount: number;
   lastError: string | null;
+  conflictBaseVersion: number | null;
 };
 
 export type WorkoutSyncResult = {
@@ -39,6 +41,7 @@ export function mutationForTransport(
     entityType: mutation.entityType,
     entityId: mutation.entityId,
     operation: mutation.operation,
+    baseVersion: mutation.baseVersion,
     payload: mutation.payload,
     createdAt: mutation.createdAt,
   };
@@ -50,6 +53,14 @@ export function isPermanentSyncError(error: unknown) {
     error.status >= 400 &&
     error.status < 500 &&
     ![408, 425, 429].includes(error.status)
+  );
+}
+
+export function isWorkoutVersionConflictError(error: unknown) {
+  return (
+    error instanceof WorkoutApiError &&
+    error.status === 409 &&
+    error.code === 'WORKOUT_VERSION_CONFLICT'
   );
 }
 
@@ -66,10 +77,22 @@ export function isBrowserOffline() {
   );
 }
 
+function shouldRepeatMutationForReview() {
+  return (
+    typeof window !== 'undefined' &&
+    window.location.hostname ===
+      'repwise-phase1a-review.keikei8250.chatgpt.site' &&
+    new URLSearchParams(window.location.search).has(
+      'repwise-repeat-mutation-test',
+    )
+  );
+}
+
 export function queueStateToSaveState(
   queue: WorkoutQueueState,
   offline = isBrowserOffline(),
 ): SaveState {
+  if (queue.conflict > 0) return 'conflict';
   if (queue.blocked > 0 || (queue.failed > 0 && !offline)) return 'error';
   if (queue.syncing > 0) return 'saving';
   if (queue.total > 0) return offline ? 'pending' : 'saving';
@@ -87,13 +110,18 @@ export async function getWorkoutQueueState(
     syncing: 0,
     failed: 0,
     blocked: 0,
+    conflict: 0,
     retryCount: 0,
     lastError: null,
+    conflictBaseVersion: null,
   };
   for (const mutation of mutations) {
     state[mutation.syncStatus] += 1;
     state.retryCount = Math.max(state.retryCount, mutation.retryCount);
     if (mutation.lastError) state.lastError = mutation.lastError;
+    if (mutation.syncStatus === 'conflict') {
+      state.conflictBaseVersion = mutation.baseVersion;
+    }
   }
   return state;
 }
@@ -121,6 +149,10 @@ async function runSync(
   let processed = 0;
   let failed: WorkoutMutation | null = null;
   for (const mutation of mutations) {
+    if (mutation.syncStatus === 'conflict') {
+      failed = mutation;
+      break;
+    }
     if (mutation.syncStatus === 'blocked' && !options.manual) {
       failed = mutation;
       break;
@@ -141,6 +173,12 @@ async function runSync(
         mutationForTransport(mutation),
         options.fetcher,
       );
+      if (shouldRepeatMutationForReview()) {
+        await syncWorkoutMutation(
+          mutationForTransport(mutation),
+          options.fetcher,
+        );
+      }
       await acknowledgeWorkoutMutation(
         mutation,
         result.workout,
@@ -150,9 +188,12 @@ async function runSync(
     } catch (cause) {
       const message =
         cause instanceof Error ? cause.message : '同期に失敗しました';
-      const syncStatus: WorkoutMutationSyncStatus = isPermanentSyncError(cause)
-        ? 'blocked'
-        : 'failed';
+      const syncStatus: WorkoutMutationSyncStatus =
+        isWorkoutVersionConflictError(cause)
+          ? 'conflict'
+          : isPermanentSyncError(cause)
+            ? 'blocked'
+            : 'failed';
       failed = {
         ...mutation,
         retryCount: mutation.retryCount + 1,

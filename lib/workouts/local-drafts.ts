@@ -12,7 +12,7 @@ export const LOCAL_DRAFT_STORE_NAME = 'workoutDrafts';
 export const WORKOUT_MUTATION_STORE_NAME = 'workoutMutationQueue';
 export const EXERCISE_MASTER_CACHE_STORE_NAME = 'exerciseMasterCache';
 export const LOCAL_DRAFT_SCHEMA_VERSION = 1;
-export const LOCAL_DATABASE_VERSION = 2;
+export const LOCAL_DATABASE_VERSION = 3;
 export const COMPLETED_DRAFT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type LocalDraftStatus = 'active' | 'completed';
@@ -49,7 +49,7 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
 
   const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const request = getIndexedDb().open(databaseName, LOCAL_DATABASE_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
       if (!database.objectStoreNames.contains(LOCAL_DRAFT_STORE_NAME)) {
         const store = database.createObjectStore(LOCAL_DRAFT_STORE_NAME, {
@@ -74,6 +74,33 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
         database.createObjectStore(EXERCISE_MASTER_CACHE_STORE_NAME, {
           keyPath: 'key',
         });
+      }
+      if (
+        event.oldVersion > 0 &&
+        event.oldVersion < 3 &&
+        database.objectStoreNames.contains(WORKOUT_MUTATION_STORE_NAME)
+      ) {
+        const store = request.transaction?.objectStore(
+          WORKOUT_MUTATION_STORE_NAME,
+        );
+        const expectedVersions = new Map<string, number>();
+        const cursorRequest = store?.index('sequence').openCursor();
+        if (cursorRequest) {
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const value = cursor.value as Partial<WorkoutMutation>;
+            const workoutId = String(value.workoutId ?? value.entityId ?? '');
+            const payloadVersion = Number(value.payload?.workout?.version ?? 1);
+            const baseVersion =
+              value.operation === 'create'
+                ? 0
+                : (expectedVersions.get(workoutId) ?? payloadVersion);
+            expectedVersions.set(workoutId, baseVersion + 1);
+            cursor.update({ ...value, baseVersion });
+            cursor.continue();
+          };
+        }
       }
     };
     request.onsuccess = () => {
@@ -132,6 +159,7 @@ function createMutationRecord(
   workout: Workout,
   operation: WorkoutMutationOperation,
   createdAt: string,
+  baseVersion: number,
 ): WorkoutMutation {
   return {
     mutationId: crypto.randomUUID(),
@@ -139,6 +167,7 @@ function createMutationRecord(
     entityId: workout.id,
     workoutId: workout.id,
     operation,
+    baseVersion,
     payload: { workout: structuredClone(workout) },
     createdAt,
     sequence: nextMutationSequence(),
@@ -218,26 +247,50 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     operation === 'complete' ? 'completed' : 'active',
     { ...options, localUpdatedAt },
   );
-  const mutation = createMutationRecord(workout, operation, localUpdatedAt);
   const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
   const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
-  const supersededRequest =
+  const [currentDraftValue, queuedValues] = await Promise.all([
+    requestResult(drafts.get(workout.id)),
+    requestResult(queue.index('workoutId').getAll(workout.id)),
+  ]);
+  const existingMutations = queuedValues
+    .filter(isWorkoutMutation)
+    .sort((a, b) => a.sequence - b.sequence);
+  const superseded =
     operation === 'replace'
-      ? queue.index('workoutId').getAll(workout.id)
-      : null;
+      ? existingMutations.filter(
+          (value) =>
+            value.operation === 'replace' &&
+            value.syncStatus === 'pending' &&
+            value.retryCount === 0,
+        )
+      : [];
+  const supersededIds = new Set(superseded.map((value) => value.mutationId));
+  const remainingPredecessors = existingMutations.filter(
+    (value) => !supersededIds.has(value.mutationId),
+  );
+  const lastPredecessor = remainingPredecessors.at(-1);
+  const currentDraft = isLocalWorkoutDraft(currentDraftValue)
+    ? currentDraftValue
+    : null;
+  const baseVersion =
+    operation === 'create'
+      ? 0
+      : Math.max(
+          0,
+          lastPredecessor
+            ? lastPredecessor.baseVersion + 1
+            : (currentDraft?.serverVersion ?? workout.version),
+        );
+  const mutation = createMutationRecord(
+    workout,
+    operation,
+    localUpdatedAt,
+    baseVersion,
+  );
   drafts.put(draft);
-  if (supersededRequest) {
-    const superseded = await requestResult(supersededRequest);
-    for (const value of superseded) {
-      if (
-        isWorkoutMutation(value) &&
-        value.operation === 'replace' &&
-        value.syncStatus === 'pending' &&
-        value.retryCount === 0
-      ) {
-        queue.delete(value.mutationId);
-      }
-    }
+  for (const value of superseded) {
+    queue.delete(value.mutationId);
   }
   queue.put(mutation);
   await complete;
@@ -254,10 +307,13 @@ function isWorkoutMutation(value: unknown): value is WorkoutMutation {
     typeof mutation.entityId === 'string' &&
     typeof mutation.workoutId === 'string' &&
     ['create', 'replace', 'complete'].includes(mutation.operation ?? '') &&
+    typeof mutation.baseVersion === 'number' &&
+    Number.isInteger(mutation.baseVersion) &&
+    mutation.baseVersion >= 0 &&
     typeof mutation.createdAt === 'string' &&
     typeof mutation.sequence === 'number' &&
     typeof mutation.retryCount === 'number' &&
-    ['pending', 'syncing', 'failed', 'blocked'].includes(
+    ['pending', 'syncing', 'failed', 'blocked', 'conflict'].includes(
       mutation.syncStatus ?? '',
     ) &&
     !!mutation.payload?.workout

@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronLeft, CloudOff, LoaderCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  ChevronLeft,
+  CloudOff,
+  LoaderCircle,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -23,11 +29,21 @@ export function WorkoutDetail({ id }: { id: string }) {
   const [workout, setWorkout] = useState<Workout | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<
-    'saved' | 'syncing' | 'pending' | 'error'
+    'saved' | 'syncing' | 'pending' | 'error' | 'conflict'
   >('saved');
+  const [serverReview, setServerReview] = useState<Workout | null>(null);
+  const [conflictBaseVersion, setConflictBaseVersion] = useState<number | null>(
+    null,
+  );
+  const [serverReviewError, setServerReviewError] = useState<string | null>(
+    null,
+  );
   const refreshSyncState = useCallback(async () => {
     const queue = await getWorkoutQueueState(id);
-    if (queue.blocked || (queue.failed && !isBrowserOffline())) {
+    setConflictBaseVersion(queue.conflictBaseVersion);
+    if (queue.conflict) {
+      setSyncState('conflict');
+    } else if (queue.blocked || (queue.failed && !isBrowserOffline())) {
       setSyncState('error');
     } else if (queue.syncing) {
       setSyncState('syncing');
@@ -35,6 +51,19 @@ export function WorkoutDetail({ id }: { id: string }) {
       setSyncState('pending');
     } else {
       setSyncState('saved');
+    }
+  }, [id]);
+  const reviewServer = useCallback(async () => {
+    setServerReviewError(null);
+    try {
+      const server = await getWorkout(id);
+      setServerReview(server);
+    } catch (cause) {
+      setServerReviewError(
+        cause instanceof Error
+          ? cause.message
+          : 'サーバー側を確認できませんでした',
+      );
     }
   }, [id]);
   useEffect(() => {
@@ -105,7 +134,9 @@ export function WorkoutDetail({ id }: { id: string }) {
             type="button"
             data-sync-state={syncState}
             onClick={() => {
-              if (syncState === 'error') {
+              if (syncState === 'conflict') {
+                void reviewServer();
+              } else if (syncState === 'error') {
                 setSyncState('syncing');
                 void syncPendingWorkoutMutations(id, { manual: true }).then(
                   () => refreshSyncState(),
@@ -119,11 +150,13 @@ export function WorkoutDetail({ id }: { id: string }) {
             ) : (
               <CloudOff className="size-3" />
             )}
-            {syncState === 'error'
-              ? '同期失敗・再試行'
-              : syncState === 'syncing'
-                ? '同期中…'
-                : 'この端末に保存済み・同期待ち'}
+            {syncState === 'conflict'
+              ? '競合あり'
+              : syncState === 'error'
+                ? '同期失敗・再試行'
+                : syncState === 'syncing'
+                  ? '同期中…'
+                  : 'この端末に保存済み・同期待ち'}
           </button>
         )}
         <h1 className="mt-3 text-3xl font-black">{workout.name}</h1>
@@ -131,6 +164,40 @@ export function WorkoutDetail({ id }: { id: string }) {
           {workout.localDate} · {workout.exercises.length}種目
         </p>
       </div>
+      {syncState === 'conflict' && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <div>
+              <p className="font-black">競合あり</p>
+              <p className="mt-1">
+                別の変更が存在するため、自動同期を停止しました。ローカル記録は保持されています。
+              </p>
+              {serverReview && (
+                <p className="mt-2 text-xs font-bold">
+                  端末の同期元: v{conflictBaseVersion ?? '—'} · サーバー側: v
+                  {serverReview.version} · {serverReview.status}
+                </p>
+              )}
+              {serverReviewError && (
+                <p className="mt-2 text-xs font-bold text-destructive">
+                  {serverReviewError}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void reviewServer()}
+                className="mt-3 rounded-lg border bg-white px-3 py-1.5 text-xs font-black"
+              >
+                サーバー側を再確認
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {workout.exercises.map((exercise, exerciseIndex) => (
         <Card key={exercise.id} className="rounded-3xl py-5 shadow-none">
           <CardContent className="px-5">

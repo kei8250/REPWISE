@@ -23,6 +23,14 @@ export function useActiveWorkout(id: string) {
   const [localSaveState, setLocalSaveState] = useState<SaveState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [conflictBaseVersion, setConflictBaseVersion] = useState<number | null>(
+    null,
+  );
+  const [serverReview, setServerReview] = useState<{
+    version: number;
+    updatedAt: string;
+    status: Workout['status'];
+  } | null>(null);
   const workoutRef = useRef<Workout | null>(null);
   const localRevisionRef = useRef(0);
   const serverUpdatedAtRef = useRef<string | null>(null);
@@ -41,7 +49,12 @@ export function useActiveWorkout(id: string) {
     if (!mountedRef.current) return queue;
     const state = queueStateToSaveState(queue);
     setSaveState(state);
-    if (state === 'error') {
+    setConflictBaseVersion(queue.conflictBaseVersion);
+    if (state === 'conflict') {
+      setError(
+        '別の変更が存在するため、自動同期を停止しました。ローカル記録はこの端末に保持されています。',
+      );
+    } else if (state === 'error') {
       setError(queue.lastError ?? '同期に失敗しました');
     } else {
       setError(null);
@@ -223,6 +236,25 @@ export function useActiveWorkout(id: string) {
     await refreshSyncState();
   }, [clearRetryTimer, id, refreshSyncState]);
 
+  const reviewServer = useCallback(async () => {
+    try {
+      const server = await getWorkout(id);
+      setServerReview({
+        version: server.version,
+        updatedAt: server.updatedAt,
+        status: server.status,
+      });
+      return server;
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'サーバー側の状態を確認できませんでした',
+      );
+      throw cause;
+    }
+  }, [id]);
+
   const complete = useCallback(async () => {
     const current = workoutRef.current;
     if (!current) throw new Error('終了するワークアウトがありません');
@@ -256,6 +288,9 @@ export function useActiveWorkout(id: string) {
     error,
     localError,
     retry,
+    reviewServer,
+    serverReview,
+    conflictBaseVersion,
     complete,
   };
 }

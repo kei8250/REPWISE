@@ -5,6 +5,7 @@ import {
   getLocalWorkoutDraft,
   listWorkoutMutations,
   LOCAL_DRAFT_DATABASE_NAME,
+  saveActiveWorkoutDraft,
   saveWorkoutDraftAndEnqueueMutation,
 } from '@/lib/workouts/local-drafts';
 import {
@@ -153,5 +154,47 @@ describe('Phase 1B-1b retry queue', () => {
       syncStatus: 'blocked',
       retryCount: 1,
     });
+  });
+
+  it('version競合ではローカルとmutationを保持して自動・手動再送を停止する', async () => {
+    const local = workout();
+    local.version = 5;
+    local.overallNote = '失ってはいけないローカル記録';
+    await saveActiveWorkoutDraft(local, {
+      serverUpdatedAt: local.updatedAt,
+    });
+    await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+    const fetcher = vi.fn(async () =>
+      Response.json(
+        {
+          error: '別の変更が存在します',
+          code: 'WORKOUT_VERSION_CONFLICT',
+          conflict: {
+            type: 'stale',
+            baseVersion: 5,
+            serverVersion: 6,
+            serverUpdatedAt: '2026-09-02T10:01:00.000Z',
+          },
+        },
+        { status: 409 },
+      ),
+    );
+
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+    await syncPendingWorkoutMutations(local.id, { fetcher, manual: true });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect((await listWorkoutMutations(local.id))[0]).toMatchObject({
+      syncStatus: 'conflict',
+      baseVersion: 5,
+      retryCount: 1,
+    });
+    expect(
+      queueStateToSaveState(await getWorkoutQueueState(local.id), false),
+    ).toBe('conflict');
+    expect((await getLocalWorkoutDraft(local.id))?.workout.overallNote).toBe(
+      '失ってはいけないローカル記録',
+    );
   });
 });

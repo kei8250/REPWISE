@@ -6,6 +6,7 @@ import type {
   WorkoutMutationInput,
   WorkoutMutationResult,
   WorkoutSummary,
+  WorkoutVersionConflictDetails,
 } from './types';
 
 export class WorkoutApiError extends Error {
@@ -13,6 +14,8 @@ export class WorkoutApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly issues: Array<{ path: string; message: string }> = [],
+    public readonly code: string | null = null,
+    public readonly conflict: WorkoutVersionConflictDetails | null = null,
   ) {
     super(message);
     this.name = 'WorkoutApiError';
@@ -36,7 +39,12 @@ async function request<T>(
     headers,
   });
   const body = (await response.json().catch(() => null)) as
-    | { error?: string; issues?: Array<{ path: string; message: string }> }
+    | {
+        error?: string;
+        issues?: Array<{ path: string; message: string }>;
+        code?: string;
+        conflict?: WorkoutVersionConflictDetails;
+      }
     | T
     | null;
   if (!response.ok) {
@@ -45,12 +53,16 @@ async function request<T>(
         ? (body as {
             error?: string;
             issues?: Array<{ path: string; message: string }>;
+            code?: string;
+            conflict?: WorkoutVersionConflictDetails;
           })
         : null;
     throw new WorkoutApiError(
       errorBody?.error ?? `保存に失敗しました（${response.status}）`,
       response.status,
       errorBody?.issues ?? [],
+      errorBody?.code ?? null,
+      errorBody?.conflict ?? null,
     );
   }
   if (body === null)

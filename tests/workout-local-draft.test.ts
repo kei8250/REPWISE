@@ -5,12 +5,14 @@ import {
   getLatestActiveWorkoutDraft,
   getLocalWorkoutDraft,
   listWorkoutMutations,
+  LOCAL_DRAFT_STORE_NAME,
   LOCAL_DRAFT_DATABASE_NAME,
   markLocalWorkoutDraftCompleted,
   pruneCompletedWorkoutDrafts,
   saveActiveWorkoutDraft,
   saveWorkoutDraftAndEnqueueMutation,
   selectWorkoutForRestore,
+  WORKOUT_MUTATION_STORE_NAME,
 } from '@/lib/workouts/local-drafts';
 import type {
   Workout,
@@ -254,9 +256,11 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
       entityId: workout.id,
       retryCount: 0,
       syncStatus: 'pending',
+      baseVersion: 0,
     });
     expect(queue[1].sequence).toBeGreaterThan(queue[0].sequence);
     expect(queue[1].mutationId).toBe(replaced.mutation.mutationId);
+    expect(queue[1].baseVersion).toBe(1);
     expect(queue[1].payload.workout.overallNote).toBe('オフライン中の変更');
     expect((await getLocalWorkoutDraft(workout.id))?.workout.overallNote).toBe(
       'オフライン中の変更',
@@ -273,7 +277,31 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
 
     const queue = await listWorkoutMutations(workout.id);
     expect(queue.map((item) => item.operation)).toEqual(['create', 'replace']);
+    expect(queue.map((item) => item.baseVersion)).toEqual([0, 1]);
     expect(queue[1].payload.workout.overallNote).toBe('最新の未送信入力');
+  });
+
+  it('認識済みserver versionとFIFO上の先行mutationからbase versionを決める', async () => {
+    const workout = activeWorkout();
+    workout.version = 5;
+    await saveActiveWorkoutDraft(workout, {
+      serverUpdatedAt: workout.updatedAt,
+    });
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+    workout.overallNote = '先行mutationに続く完了';
+    workout.status = 'completed';
+    workout.endedAt = localTime;
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'complete');
+
+    expect(
+      (await listWorkoutMutations(workout.id)).map((item) => ({
+        operation: item.operation,
+        baseVersion: item.baseVersion,
+      })),
+    ).toEqual([
+      { operation: 'replace', baseVersion: 5 },
+      { operation: 'complete', baseVersion: 6 },
+    ]);
   });
 
   it('未同期の完了mutationがある下書きは保持期間を過ぎても削除しない', async () => {
@@ -289,5 +317,79 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     );
     expect(removed).toBe(0);
     expect(await getLocalWorkoutDraft(completed.id)).not.toBeNull();
+  });
+
+  it('Phase 1B-1bの既存キューをbase version付きで安全にアップグレードする', async () => {
+    const databaseName = `${LOCAL_DRAFT_DATABASE_NAME}-legacy-upgrade`;
+    await closeLocalDraftDatabase(databaseName);
+    await new Promise<void>((resolve, reject) => {
+      const deleting = indexedDB.deleteDatabase(databaseName);
+      deleting.onsuccess = () => resolve();
+      deleting.onerror = () => reject(deleting.error);
+    });
+    const legacy = activeWorkout();
+    legacy.version = 5;
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const opening = indexedDB.open(databaseName, 2);
+      opening.onupgradeneeded = () => {
+        opening.result.createObjectStore(LOCAL_DRAFT_STORE_NAME, {
+          keyPath: 'workoutId',
+        });
+        const queue = opening.result.createObjectStore(
+          WORKOUT_MUTATION_STORE_NAME,
+          { keyPath: 'mutationId' },
+        );
+        queue.createIndex('sequence', 'sequence', { unique: true });
+        queue.createIndex('workoutId', 'workoutId', { unique: false });
+        queue.createIndex('syncStatus', 'syncStatus', { unique: false });
+      };
+      opening.onsuccess = () => resolve(opening.result);
+      opening.onerror = () => reject(opening.error);
+    });
+    const transaction = database.transaction(
+      WORKOUT_MUTATION_STORE_NAME,
+      'readwrite',
+    );
+    const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+    store.put({
+      mutationId: 'legacy-replace-1',
+      entityType: 'workout',
+      entityId: legacy.id,
+      workoutId: legacy.id,
+      operation: 'replace',
+      payload: { workout: legacy },
+      createdAt: serverTime,
+      sequence: 1,
+      retryCount: 1,
+      syncStatus: 'failed',
+      lastAttemptAt: serverTime,
+      lastError: 'response lost',
+    });
+    store.put({
+      mutationId: 'legacy-replace-2',
+      entityType: 'workout',
+      entityId: legacy.id,
+      workoutId: legacy.id,
+      operation: 'replace',
+      payload: { workout: legacy },
+      createdAt: localTime,
+      sequence: 2,
+      retryCount: 0,
+      syncStatus: 'pending',
+      lastAttemptAt: null,
+      lastError: null,
+    });
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+
+    expect(
+      (await listWorkoutMutations(legacy.id, databaseName)).map(
+        (item) => item.baseVersion,
+      ),
+    ).toEqual([5, 6]);
+    await closeLocalDraftDatabase(databaseName);
   });
 });

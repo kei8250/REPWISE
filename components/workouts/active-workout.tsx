@@ -23,6 +23,7 @@ import type {
 import { useActiveWorkout } from '@/hooks/use-active-workout';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { ExercisePicker } from './exercise-picker';
+import { ReviewConflictControl } from './review-conflict-control';
 import { WorkoutExercise } from './workout-exercise';
 
 export function ActiveWorkout({ id }: { id: string }) {
@@ -34,6 +35,9 @@ export function ActiveWorkout({ id }: { id: string }) {
     error,
     localError,
     retry,
+    reviewServer,
+    serverReview,
+    conflictBaseVersion,
     complete,
   } = useActiveWorkout(id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -153,6 +157,7 @@ export function ActiveWorkout({ id }: { id: string }) {
               state={saveState}
               error={error}
               onRetry={() => void retry()}
+              onReview={() => void reviewServer()}
             />
           </div>
           <Button
@@ -189,6 +194,7 @@ export function ActiveWorkout({ id }: { id: string }) {
         )}
       </header>
       <main className="space-y-6 px-4 py-5">
+        <ReviewConflictControl workoutId={workout.id} />
         {finishError && (
           <p
             role="alert"
@@ -204,6 +210,37 @@ export function ActiveWorkout({ id }: { id: string }) {
           >
             {localError}
           </p>
+        )}
+        {saveState === 'conflict' && (
+          <div
+            role="alert"
+            className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <div>
+                <p className="font-black">競合あり</p>
+                <p className="mt-1">
+                  別の変更が存在するため、自動同期を停止しました。ローカル記録はこの端末に保持されています。
+                </p>
+                {serverReview && (
+                  <p className="mt-2 text-xs font-bold">
+                    端末の同期元: v{conflictBaseVersion ?? '—'} · サーバー側: v
+                    {serverReview.version} · {serverReview.status}
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3 bg-white"
+                  onClick={() => void reviewServer()}
+                >
+                  サーバー側を再確認
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
         {!selected ? (
           <div className="rounded-[28px] border border-dashed bg-card px-6 py-14 text-center">
@@ -272,10 +309,12 @@ function SaveIndicator({
   state,
   error,
   onRetry,
+  onReview,
 }: {
-  state: 'loading' | 'saved' | 'saving' | 'pending' | 'error';
+  state: 'loading' | 'saved' | 'saving' | 'pending' | 'error' | 'conflict';
   error: string | null;
   onRetry: () => void;
+  onReview: () => void;
 }) {
   if (state === 'saving')
     return (
@@ -301,6 +340,18 @@ function SaveIndicator({
       >
         <CloudOff className="size-3" />
         同期失敗・再試行
+      </button>
+    );
+  if (state === 'conflict')
+    return (
+      <button
+        type="button"
+        onClick={onReview}
+        title={error ?? undefined}
+        className="inline-flex items-center gap-1 text-[10px] font-black text-amber-800"
+      >
+        <AlertCircle className="size-3" />
+        競合あり
       </button>
     );
   return (

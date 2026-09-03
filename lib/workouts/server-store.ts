@@ -16,6 +16,8 @@ import {
   validateWorkoutSet,
   WorkoutConflictError,
   WorkoutNotFoundError,
+  WorkoutVersionAheadError,
+  WorkoutVersionConflictError,
 } from './validation';
 
 const ownerId = 'default';
@@ -69,6 +71,7 @@ type ProcessedMutationRow = {
   entity_type: string;
   entity_id: string;
   operation: string;
+  base_version: number;
   request_fingerprint: string;
   result_json: string;
 };
@@ -374,6 +377,7 @@ function snapshotStatements(
   db: D1Database,
   workout: Workout,
   creating: boolean,
+  mutation: WorkoutMutationInput,
 ) {
   const statements: D1PreparedStatement[] = creating
     ? [
@@ -381,7 +385,10 @@ function snapshotStatements(
           .prepare(
             `INSERT INTO workout
               (id, owner_id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+             )`,
           )
           .bind(
             workout.id,
@@ -397,6 +404,8 @@ function snapshotStatements(
             workout.version,
             workout.createdAt,
             workout.updatedAt,
+            mutation.mutationId,
+            ownerId,
           ),
       ]
     : [
@@ -404,7 +413,10 @@ function snapshotStatements(
           .prepare(
             `UPDATE workout
              SET name = ?, status = ?, local_date = ?, timezone = ?, ended_at = ?, overall_note = ?, rating = ?, version = ?, updated_at = ?
-             WHERE id = ? AND owner_id = ?`,
+             WHERE id = ? AND owner_id = ? AND version = ?
+               AND EXISTS (
+                 SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+               )`,
           )
           .bind(
             workout.name,
@@ -418,10 +430,19 @@ function snapshotStatements(
             workout.updatedAt,
             workout.id,
             ownerId,
+            mutation.baseVersion,
+            mutation.mutationId,
+            ownerId,
           ),
         db
-          .prepare('DELETE FROM workout_exercise WHERE workout_id = ?')
-          .bind(workout.id),
+          .prepare(
+            `DELETE FROM workout_exercise
+             WHERE workout_id = ?
+               AND EXISTS (
+                 SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+               )`,
+          )
+          .bind(workout.id, mutation.mutationId, ownerId),
       ];
   for (const exercise of workout.exercises) {
     statements.push(
@@ -429,7 +450,10 @@ function snapshotStatements(
         .prepare(
           `INSERT INTO workout_exercise
             (id, workout_id, exercise_id, position, status, exercise_name_snapshot, note, started_at, completed_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+           )`,
         )
         .bind(
           exercise.id,
@@ -443,6 +467,8 @@ function snapshotStatements(
           exercise.completedAt,
           exercise.createdAt,
           exercise.updatedAt,
+          mutation.mutationId,
+          ownerId,
         ),
     );
     for (const set of exercise.sets) {
@@ -452,7 +478,10 @@ function snapshotStatements(
             `INSERT INTO workout_set
               (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max,
                actual_load_grams, actual_reps, memo, completed_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             SELECT ?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+             )`,
           )
           .bind(
             set.id,
@@ -468,6 +497,8 @@ function snapshotStatements(
             set.completedAt,
             set.createdAt,
             set.updatedAt,
+            mutation.mutationId,
+            ownerId,
           ),
       );
     }
@@ -475,12 +506,16 @@ function snapshotStatements(
   return statements;
 }
 
-async function mutationFingerprint(mutation: WorkoutMutationInput) {
+async function mutationFingerprint(
+  mutation: WorkoutMutationInput,
+  includeBaseVersion = true,
+) {
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       entityType: mutation.entityType,
       entityId: mutation.entityId,
       operation: mutation.operation,
+      ...(includeBaseVersion ? { baseVersion: mutation.baseVersion } : {}),
       payload: mutation.payload,
     }),
   );
@@ -490,24 +525,131 @@ async function mutationFingerprint(mutation: WorkoutMutationInput) {
     .join('');
 }
 
+function assertMutationCanApply(
+  mutation: WorkoutMutationInput,
+  existing: Workout | null,
+) {
+  const creating = mutation.operation === 'create';
+  if (creating) {
+    if (mutation.baseVersion !== 0) {
+      throw new WorkoutVersionAheadError({
+        type: 'ahead',
+        baseVersion: mutation.baseVersion,
+        serverVersion: existing?.version ?? 0,
+        serverUpdatedAt: existing?.updatedAt ?? mutation.createdAt,
+      });
+    }
+    if (existing) {
+      throw new WorkoutConflictError('同じIDのワークアウトがすでにあります');
+    }
+    return;
+  }
+  if (!existing) {
+    throw new WorkoutNotFoundError(
+      '先にワークアウト作成を同期する必要があります',
+    );
+  }
+  const conflict = {
+    baseVersion: mutation.baseVersion,
+    serverVersion: existing.version,
+    serverUpdatedAt: existing.updatedAt,
+  } as const;
+  if (mutation.baseVersion < existing.version) {
+    throw new WorkoutVersionConflictError({ type: 'stale', ...conflict });
+  }
+  if (mutation.baseVersion > existing.version) {
+    throw new WorkoutVersionAheadError({ type: 'ahead', ...conflict });
+  }
+  if (existing.status === 'completed') {
+    throw new WorkoutConflictError('完了済みワークアウトは編集できません');
+  }
+}
+
+function mutationMatchesProcessed(
+  processed: ProcessedMutationRow,
+  mutation: WorkoutMutationInput,
+  fingerprint: string,
+  legacyFingerprint: string,
+) {
+  return (
+    processed.entity_type === mutation.entityType &&
+    processed.entity_id === mutation.entityId &&
+    processed.operation === mutation.operation &&
+    (processed.request_fingerprint === fingerprint ||
+      (processed.base_version === 0 &&
+        processed.request_fingerprint === legacyFingerprint))
+  );
+}
+
+async function findProcessedMutation(db: D1Database, mutationId: string) {
+  return db
+    .prepare(
+      `SELECT entity_type, entity_id, operation, base_version, request_fingerprint, result_json
+       FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?`,
+    )
+    .bind(mutationId, ownerId)
+    .first<ProcessedMutationRow>();
+}
+
+function processedMutationGate(
+  db: D1Database,
+  mutation: WorkoutMutationInput,
+  fingerprint: string,
+  result: WorkoutMutationResult,
+  processedAt: string,
+) {
+  const commonValues = [
+    mutation.mutationId,
+    ownerId,
+    mutation.entityType,
+    mutation.entityId,
+    mutation.operation,
+    mutation.baseVersion,
+    fingerprint,
+    JSON.stringify(result),
+    processedAt,
+  ] as const;
+  if (mutation.operation === 'create') {
+    return db
+      .prepare(
+        `INSERT INTO processed_mutation
+          (mutation_id, owner_id, entity_type, entity_id, operation, base_version, request_fingerprint, result_json, processed_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (
+           SELECT 1 FROM workout WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+         )`,
+      )
+      .bind(...commonValues, mutation.entityId, ownerId);
+  }
+  return db
+    .prepare(
+      `INSERT INTO processed_mutation
+        (mutation_id, owner_id, entity_type, entity_id, operation, base_version, request_fingerprint, result_json, processed_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM workout
+         WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+           AND version = ? AND status != 'completed'
+       )`,
+    )
+    .bind(...commonValues, mutation.entityId, ownerId, mutation.baseVersion);
+}
+
 export async function applyWorkoutMutation(
   db: D1Database,
   mutation: WorkoutMutationInput,
 ): Promise<WorkoutMutationResult> {
   const fingerprint = await mutationFingerprint(mutation);
-  const processed = await db
-    .prepare(
-      `SELECT entity_type, entity_id, operation, request_fingerprint, result_json
-       FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?`,
-    )
-    .bind(mutation.mutationId, ownerId)
-    .first<ProcessedMutationRow>();
+  const legacyFingerprint = await mutationFingerprint(mutation, false);
+  const processed = await findProcessedMutation(db, mutation.mutationId);
   if (processed) {
     if (
-      processed.entity_type !== mutation.entityType ||
-      processed.entity_id !== mutation.entityId ||
-      processed.operation !== mutation.operation ||
-      processed.request_fingerprint !== fingerprint
+      !mutationMatchesProcessed(
+        processed,
+        mutation,
+        fingerprint,
+        legacyFingerprint,
+      )
     ) {
       throw new WorkoutConflictError(
         '同じmutation_idが異なる変更に使用されています',
@@ -519,17 +661,7 @@ export async function applyWorkoutMutation(
 
   const existing = await getWorkout(db, mutation.entityId);
   const creating = mutation.operation === 'create';
-  if (creating && existing) {
-    throw new WorkoutConflictError('同じIDのワークアウトがすでにあります');
-  }
-  if (!creating && !existing) {
-    throw new WorkoutNotFoundError(
-      '先にワークアウト作成を同期する必要があります',
-    );
-  }
-  if (existing?.status === 'completed') {
-    throw new WorkoutConflictError('完了済みワークアウトは編集できません');
-  }
+  assertMutationCanApply(mutation, existing);
 
   const saved = makeServerSnapshot(
     mutation.payload.workout,
@@ -544,26 +676,31 @@ export async function applyWorkoutMutation(
     duplicate: false,
     workout: saved,
   };
-  const statements = snapshotStatements(db, saved, creating);
-  statements.push(
-    db
-      .prepare(
-        `INSERT INTO processed_mutation
-          (mutation_id, owner_id, entity_type, entity_id, operation, request_fingerprint, result_json, processed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        mutation.mutationId,
-        ownerId,
-        mutation.entityType,
-        mutation.entityId,
-        mutation.operation,
-        fingerprint,
-        JSON.stringify(result),
-        saved.updatedAt,
-      ),
-  );
-  await db.batch(statements);
+  const statements = [
+    processedMutationGate(db, mutation, fingerprint, result, saved.updatedAt),
+    ...snapshotStatements(db, saved, creating, mutation),
+  ];
+  let batchResults: D1Result<unknown>[];
+  try {
+    batchResults = await db.batch(statements);
+  } catch (error) {
+    const raced = await findProcessedMutation(db, mutation.mutationId);
+    if (
+      raced &&
+      mutationMatchesProcessed(raced, mutation, fingerprint, legacyFingerprint)
+    ) {
+      const previous = JSON.parse(raced.result_json) as WorkoutMutationResult;
+      return { ...previous, duplicate: true };
+    }
+    throw error;
+  }
+  if (Number(batchResults[0]?.meta.changes ?? 0) === 0) {
+    const latest = await getWorkout(db, mutation.entityId);
+    assertMutationCanApply(mutation, latest);
+    throw new WorkoutConflictError(
+      '同期中にサーバー状態が変更されたため保存を停止しました',
+    );
+  }
   return result;
 }
 

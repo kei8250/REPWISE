@@ -9,6 +9,7 @@ import type {
   WorkoutSet,
   WorkoutSetStatus,
   WorkoutStatus,
+  WorkoutVersionConflictDetails,
 } from './types';
 
 export type ValidationIssue = { path: string; message: string };
@@ -31,6 +32,28 @@ export class WorkoutConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'WorkoutConflictError';
+  }
+}
+
+export class WorkoutVersionConflictError extends Error {
+  readonly code = 'WORKOUT_VERSION_CONFLICT';
+
+  constructor(public readonly conflict: WorkoutVersionConflictDetails) {
+    super(
+      `別の変更が存在します（端末 v${conflict.baseVersion} / サーバー v${conflict.serverVersion}）`,
+    );
+    this.name = 'WorkoutVersionConflictError';
+  }
+}
+
+export class WorkoutVersionAheadError extends Error {
+  readonly code = 'WORKOUT_VERSION_AHEAD';
+
+  constructor(public readonly conflict: WorkoutVersionConflictDetails) {
+    super(
+      `端末のbase versionがサーバーより進んでいます（端末 v${conflict.baseVersion} / サーバー v${conflict.serverVersion}）`,
+    );
+    this.name = 'WorkoutVersionAheadError';
   }
 }
 
@@ -416,6 +439,14 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
     issues.push({ path: 'operation', message: '同期操作が正しくありません' });
   }
   const createdAt = timestamp(input.createdAt, 'createdAt', issues) ?? '';
+  const baseVersion =
+    integer(
+      input.baseVersion,
+      'baseVersion',
+      issues,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    ) ?? 0;
   let workout: Workout | null = null;
   try {
     workout = validateWorkoutSnapshot(record(input.payload).workout, entityId);
@@ -441,6 +472,7 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
     entityType: 'workout',
     entityId,
     operation,
+    baseVersion,
     payload: { workout },
     createdAt,
   };
@@ -454,6 +486,24 @@ export function toErrorResponse(error: unknown) {
     };
   if (error instanceof WorkoutNotFoundError)
     return { status: 404, body: { error: error.message } };
+  if (error instanceof WorkoutVersionConflictError)
+    return {
+      status: 409,
+      body: {
+        error: error.message,
+        code: error.code,
+        conflict: error.conflict,
+      },
+    };
+  if (error instanceof WorkoutVersionAheadError)
+    return {
+      status: 409,
+      body: {
+        error: error.message,
+        code: error.code,
+        conflict: error.conflict,
+      },
+    };
   if (error instanceof WorkoutConflictError)
     return { status: 409, body: { error: error.message } };
   const message =

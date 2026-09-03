@@ -140,15 +140,32 @@ function mutation(
   mutationId: string,
   operation: WorkoutMutationInput['operation'],
   snapshot: Workout,
+  baseVersion = operation === 'create' ? 0 : snapshot.version,
 ): WorkoutMutationInput {
   return {
     mutationId,
     entityType: 'workout',
     entityId: snapshot.id,
     operation,
+    baseVersion,
     payload: { workout: snapshot },
     createdAt: timestamp,
   };
+}
+
+async function legacyFingerprint(input: WorkoutMutationInput) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      entityType: input.entityType,
+      entityId: input.entityId,
+      operation: input.operation,
+      payload: input.payload,
+    }),
+  );
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 let sqlite: DatabaseSync;
@@ -161,6 +178,7 @@ beforeEach(() => {
     '0000_public_franklin_richards.sql',
     '0001_gray_magma.sql',
     '0002_chilly_wallop.sql',
+    '0003_jazzy_karnak.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),
@@ -247,5 +265,196 @@ describe('Phase 1B-1b server idempotency', () => {
         )
         .get(),
     ).toMatchObject({ count: 0 });
+  });
+});
+
+describe('Phase 1B-1c workout versions', () => {
+  it('正しいbase versionだけを適用してserver versionを1ずつ進める', async () => {
+    const created = await applyWorkoutMutation(
+      d1,
+      mutation('version-create', 'create', workout()),
+    );
+    const changed = structuredClone(created.workout);
+    changed.overallNote = 'version 2の内容';
+    const replaced = await applyWorkoutMutation(
+      d1,
+      mutation('version-replace', 'replace', changed, created.workout.version),
+    );
+
+    expect(created.workout.version).toBe(1);
+    expect(replaced.workout.version).toBe(2);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT base_version FROM processed_mutation WHERE mutation_id = 'version-replace'",
+        )
+        .get(),
+    ).toMatchObject({ base_version: 1 });
+  });
+
+  it('処理済みmutationはserver versionが進んだ後もversion競合より先に冪等応答する', async () => {
+    const created = await applyWorkoutMutation(
+      d1,
+      mutation('priority-create', 'create', workout()),
+    );
+    const second = structuredClone(created.workout);
+    second.overallNote = 'version 2';
+    const secondMutation = mutation(
+      'priority-second',
+      'replace',
+      second,
+      created.workout.version,
+    );
+    const secondResult = await applyWorkoutMutation(d1, secondMutation);
+    const third = structuredClone(secondResult.workout);
+    third.overallNote = 'version 3';
+    await applyWorkoutMutation(
+      d1,
+      mutation(
+        'priority-third',
+        'replace',
+        third,
+        secondResult.workout.version,
+      ),
+    );
+
+    const replay = await applyWorkoutMutation(d1, secondMutation);
+    expect(replay).toMatchObject({ duplicate: true });
+    expect(replay.workout.version).toBe(2);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, overall_note FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({ version: 3, overall_note: 'version 3' });
+  });
+
+  it('Phase 1B-1bで処理済みの旧fingerprintもversion判定より先に冪等応答する', async () => {
+    const created = await applyWorkoutMutation(
+      d1,
+      mutation('legacy-create', 'create', workout()),
+    );
+    const second = structuredClone(created.workout);
+    second.overallNote = '旧クライアントで保存';
+    const legacyMutation = mutation('legacy-replace', 'replace', second, 1);
+    const secondResult = await applyWorkoutMutation(d1, legacyMutation);
+    sqlite
+      .prepare(
+        `UPDATE processed_mutation
+         SET base_version = 0, request_fingerprint = ?
+         WHERE mutation_id = 'legacy-replace'`,
+      )
+      .run(await legacyFingerprint(legacyMutation));
+    const third = structuredClone(secondResult.workout);
+    third.overallNote = 'server version 3';
+    await applyWorkoutMutation(
+      d1,
+      mutation('legacy-third', 'replace', third, 2),
+    );
+
+    const replay = await applyWorkoutMutation(d1, legacyMutation);
+    expect(replay).toMatchObject({ duplicate: true });
+    expect(replay.workout.version).toBe(2);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, overall_note FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({ version: 3, overall_note: 'server version 3' });
+  });
+
+  it('古いbase versionを409相当の競合として拒否しserverを上書きしない', async () => {
+    const initial = workout();
+    const created = await applyWorkoutMutation(
+      d1,
+      mutation('conflict-create', 'create', initial),
+    );
+    const remote = structuredClone(created.workout);
+    remote.overallNote = 'サーバー側の新しい変更';
+    await applyWorkoutMutation(
+      d1,
+      mutation('conflict-remote', 'replace', remote, 1),
+    );
+    const stale = structuredClone(created.workout);
+    stale.overallNote = '古い端末からの上書き';
+
+    await expect(
+      applyWorkoutMutation(d1, mutation('conflict-stale', 'replace', stale, 1)),
+    ).rejects.toMatchObject({
+      name: 'WorkoutVersionConflictError',
+      code: 'WORKOUT_VERSION_CONFLICT',
+      conflict: { type: 'stale', baseVersion: 1, serverVersion: 2 },
+    });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, overall_note FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({ version: 2, overall_note: 'サーバー側の新しい変更' });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM processed_mutation WHERE mutation_id = 'conflict-stale'",
+        )
+        .get(),
+    ).toMatchObject({ count: 0 });
+  });
+
+  it('serverより進んだbase versionを通常競合と区別して拒否する', async () => {
+    await applyWorkoutMutation(
+      d1,
+      mutation('ahead-create', 'create', workout()),
+    );
+    await expect(
+      applyWorkoutMutation(
+        d1,
+        mutation('ahead-replace', 'replace', workout(), 2),
+      ),
+    ).rejects.toMatchObject({
+      name: 'WorkoutVersionAheadError',
+      code: 'WORKOUT_VERSION_AHEAD',
+      conflict: { type: 'ahead', baseVersion: 2, serverVersion: 1 },
+    });
+  });
+
+  it('古いbase versionからのcompleteでserverを完了・上書きしない', async () => {
+    const created = await applyWorkoutMutation(
+      d1,
+      mutation('complete-conflict-create', 'create', workout()),
+    );
+    const remote = structuredClone(created.workout);
+    remote.overallNote = '完了前のサーバー更新';
+    await applyWorkoutMutation(
+      d1,
+      mutation('complete-conflict-remote', 'replace', remote, 1),
+    );
+    const staleComplete = structuredClone(created.workout);
+    staleComplete.status = 'completed';
+    staleComplete.endedAt = timestamp;
+    staleComplete.overallNote = '古い完了内容';
+
+    await expect(
+      applyWorkoutMutation(
+        d1,
+        mutation('complete-conflict-stale', 'complete', staleComplete, 1),
+      ),
+    ).rejects.toMatchObject({
+      code: 'WORKOUT_VERSION_CONFLICT',
+      conflict: { type: 'stale', baseVersion: 1, serverVersion: 2 },
+    });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, version, overall_note FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({
+      status: 'active',
+      version: 2,
+      overall_note: '完了前のサーバー更新',
+    });
   });
 });

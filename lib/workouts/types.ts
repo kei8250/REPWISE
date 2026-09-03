@@ -97,7 +97,8 @@ export type WorkoutMutationSyncStatus =
   | 'pending'
   | 'syncing'
   | 'failed'
-  | 'blocked';
+  | 'blocked'
+  | 'conflict';
 
 export interface WorkoutMutationPayload {
   workout: Workout;
@@ -108,6 +109,7 @@ export interface WorkoutMutationInput {
   entityType: 'workout';
   entityId: string;
   operation: WorkoutMutationOperation;
+  baseVersion: number;
   payload: WorkoutMutationPayload;
   createdAt: string;
 }
@@ -127,4 +129,17 @@ export interface WorkoutMutationResult {
   workout: Workout;
 }
 
-export type SaveState = 'loading' | 'saved' | 'saving' | 'pending' | 'error';
+export interface WorkoutVersionConflictDetails {
+  type: 'stale' | 'ahead';
+  baseVersion: number;
+  serverVersion: number;
+  serverUpdatedAt: string;
+}
+
+export type SaveState =
+  | 'loading'
+  | 'saved'
+  | 'saving'
+  | 'pending'
+  | 'error'
+  | 'conflict';

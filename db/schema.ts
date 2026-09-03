@@ -179,6 +179,7 @@ export const processedMutations = sqliteTable(
     entityType: text('entity_type').notNull(),
     entityId: text('entity_id').notNull(),
     operation: text('operation').notNull(),
+    baseVersion: integer('base_version').notNull().default(0),
     requestFingerprint: text('request_fingerprint').notNull(),
     resultJson: text('result_json').notNull(),
     processedAt: text('processed_at').notNull(),

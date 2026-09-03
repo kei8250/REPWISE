@@ -1,0 +1,1 @@
+ALTER TABLE `processed_mutation` ADD `base_version` integer DEFAULT 0 NOT NULL;

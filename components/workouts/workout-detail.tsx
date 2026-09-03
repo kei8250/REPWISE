@@ -285,10 +285,15 @@ export function WorkoutDetail({ id }: { id: string }) {
               <Trash2 />
             </div>
             <div>
-              <h1 className="text-2xl font-black">削除しました</h1>
+              <h1 className="text-2xl font-black">
+                {syncState === 'conflict'
+                  ? '削除を停止しました'
+                  : '削除しました'}
+              </h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                通常の履歴には表示されません。データはsoft
-                deleteで保持されています。
+                {syncState === 'conflict'
+                  ? 'サーバー側の記録は削除されていません。'
+                  : '通常の履歴には表示されません。データはsoft deleteで保持されています。'}
               </p>
             </div>
             <p

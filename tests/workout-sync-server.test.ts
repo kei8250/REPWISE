@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyWorkoutMutation } from '@/lib/workouts/server-store';
+import {
+  applyWorkoutMutation,
+  getWorkout,
+  listWorkouts,
+} from '@/lib/workouts/server-store';
 import type {
   Workout,
   WorkoutExercise,
@@ -132,6 +136,7 @@ function workout(): Workout {
     version: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
+    deletedAt: null,
     exercises: [exercise('we-bench', 'ex-bench-press', 'ベンチプレス', 0)],
   };
 }
@@ -153,13 +158,34 @@ function mutation(
   };
 }
 
+async function createCompletedWorkout(prefix: string) {
+  const created = await applyWorkoutMutation(
+    d1,
+    mutation(`${prefix}-create`, 'create', workout()),
+  );
+  const completing = structuredClone(created.workout);
+  completing.status = 'completed';
+  completing.endedAt = timestamp;
+  return applyWorkoutMutation(
+    d1,
+    mutation(
+      `${prefix}-complete`,
+      'complete',
+      completing,
+      created.workout.version,
+    ),
+  );
+}
+
 async function legacyFingerprint(input: WorkoutMutationInput) {
+  const workout = { ...input.payload.workout };
+  delete (workout as { deletedAt?: string | null }).deletedAt;
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       entityType: input.entityType,
       entityId: input.entityId,
       operation: input.operation,
-      payload: input.payload,
+      payload: { workout },
     }),
   );
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -455,6 +481,171 @@ describe('Phase 1B-1c workout versions', () => {
       status: 'active',
       version: 2,
       overall_note: '完了前のサーバー更新',
+    });
+  });
+});
+
+describe('Phase 1B-2a completed workout changes', () => {
+  it('完了済みワークアウトの項目・種目・セットを編集しversionを進める', async () => {
+    const completed = await createCompletedWorkout('edit');
+    const changed = structuredClone(completed.workout);
+    changed.name = '編集後の脚トレ';
+    changed.localDate = '2026-09-03';
+    changed.overallNote = '編集後の全体メモ';
+    changed.rating = 5;
+    const editedSet = changed.exercises[0].sets[0];
+    editedSet.position = 1;
+    editedSet.actualLoadGrams = 70_000;
+    editedSet.actualReps = 8;
+    editedSet.memo = '編集したセットメモ';
+    changed.exercises[0].sets = [set('we-bench-set-new', 0), editedSet];
+    changed.exercises.push(
+      exercise('we-row', 'ex-seated-row', 'シーテッドロー', 1),
+    );
+
+    const edited = await applyWorkoutMutation(
+      d1,
+      mutation('edit-completed', 'edit', changed, completed.workout.version),
+    );
+
+    expect(edited.workout).toMatchObject({
+      name: '編集後の脚トレ',
+      localDate: '2026-09-03',
+      overallNote: '編集後の全体メモ',
+      rating: 5,
+      version: 3,
+      deletedAt: null,
+    });
+    expect(edited.workout.exercises).toHaveLength(2);
+    expect(edited.workout.exercises[0].sets.map((item) => item.id)).toEqual([
+      'we-bench-set-new',
+      'we-bench-set-1',
+    ]);
+    expect(edited.workout.exercises[0].sets[1]).toMatchObject({
+      actualLoadGrams: 70_000,
+      actualReps: 8,
+      memo: '編集したセットメモ',
+    });
+  });
+
+  it('同じ編集mutationの再送を二重適用しない', async () => {
+    const completed = await createCompletedWorkout('edit-replay');
+    const changed = structuredClone(completed.workout);
+    changed.overallNote = '一度だけ適用';
+    const input = mutation(
+      'edit-replay-mutation',
+      'edit',
+      changed,
+      completed.workout.version,
+    );
+
+    const first = await applyWorkoutMutation(d1, input);
+    const replay = await applyWorkoutMutation(d1, input);
+
+    expect(first).toMatchObject({ duplicate: false, workout: { version: 3 } });
+    expect(replay).toMatchObject({ duplicate: true, workout: { version: 3 } });
+    expect(
+      sqlite
+        .prepare("SELECT version FROM workout WHERE id = 'idempotent-workout'")
+        .get(),
+    ).toMatchObject({ version: 3 });
+  });
+
+  it('stale versionの完了済み編集を拒否してサーバー内容を保持する', async () => {
+    const completed = await createCompletedWorkout('edit-stale');
+    const remote = structuredClone(completed.workout);
+    remote.overallNote = 'サーバー側の編集';
+    await applyWorkoutMutation(
+      d1,
+      mutation('edit-stale-remote', 'edit', remote, 2),
+    );
+    const stale = structuredClone(completed.workout);
+    stale.overallNote = '古いローカル編集';
+
+    await expect(
+      applyWorkoutMutation(d1, mutation('edit-stale-local', 'edit', stale, 2)),
+    ).rejects.toMatchObject({
+      code: 'WORKOUT_VERSION_CONFLICT',
+      conflict: { type: 'stale', baseVersion: 2, serverVersion: 3 },
+    });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, overall_note FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({ version: 3, overall_note: 'サーバー側の編集' });
+  });
+
+  it('soft deleteで通常取得・履歴から除外し、再送で二重削除しない', async () => {
+    const completed = await createCompletedWorkout('delete');
+    const deleting = mutation(
+      'delete-completed',
+      'delete',
+      completed.workout,
+      completed.workout.version,
+    );
+    const first = await applyWorkoutMutation(d1, deleting);
+    const replay = await applyWorkoutMutation(d1, deleting);
+
+    expect(first.workout).toMatchObject({ version: 3 });
+    expect(first.workout.deletedAt).not.toBeNull();
+    expect(replay).toMatchObject({ duplicate: true, workout: { version: 3 } });
+    expect(await getWorkout(d1, completed.workout.id)).toBeNull();
+    expect(await listWorkouts(d1, 'completed')).toEqual([]);
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM workout_exercise').get(),
+    ).toMatchObject({ count: 1 });
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM workout_set').get(),
+    ).toMatchObject({ count: 2 });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT version, deleted_at FROM workout WHERE id = 'idempotent-workout'",
+        )
+        .get(),
+    ).toMatchObject({ version: 3 });
+  });
+
+  it('restoreもmutation/version管理し、履歴へ戻す', async () => {
+    const completed = await createCompletedWorkout('restore');
+    const deleted = await applyWorkoutMutation(
+      d1,
+      mutation('restore-delete', 'delete', completed.workout, 2),
+    );
+    const restored = await applyWorkoutMutation(
+      d1,
+      mutation('restore-workout', 'restore', deleted.workout, 3),
+    );
+
+    expect(restored.workout).toMatchObject({ version: 4, deletedAt: null });
+    expect(await getWorkout(d1, completed.workout.id)).not.toBeNull();
+    expect(await listWorkouts(d1, 'completed')).toHaveLength(1);
+  });
+
+  it('stale versionの削除を競合として拒否し、勝手に削除しない', async () => {
+    const completed = await createCompletedWorkout('delete-stale');
+    const remote = structuredClone(completed.workout);
+    remote.overallNote = '削除前のサーバー変更';
+    await applyWorkoutMutation(
+      d1,
+      mutation('delete-stale-remote', 'edit', remote, 2),
+    );
+
+    await expect(
+      applyWorkoutMutation(
+        d1,
+        mutation('delete-stale-local', 'delete', completed.workout, 2),
+      ),
+    ).rejects.toMatchObject({
+      code: 'WORKOUT_VERSION_CONFLICT',
+      conflict: { type: 'stale', baseVersion: 2, serverVersion: 3 },
+    });
+    expect(await getWorkout(d1, completed.workout.id)).toMatchObject({
+      version: 3,
+      deletedAt: null,
+      overallNote: '削除前のサーバー変更',
     });
   });
 });

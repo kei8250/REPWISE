@@ -62,6 +62,7 @@ export interface Workout {
   version: number;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
   exercises: WorkoutExercise[];
 }
 
@@ -92,7 +93,13 @@ export interface CreateExerciseMasterInput {
   bodyPart: string;
 }
 
-export type WorkoutMutationOperation = 'create' | 'replace' | 'complete';
+export type WorkoutMutationOperation =
+  | 'create'
+  | 'replace'
+  | 'complete'
+  | 'edit'
+  | 'delete'
+  | 'restore';
 export type WorkoutMutationSyncStatus =
   | 'pending'
   | 'syncing'

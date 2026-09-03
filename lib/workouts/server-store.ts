@@ -35,6 +35,7 @@ type WorkoutRow = {
   version: number;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 };
 
 type ExerciseRow = {
@@ -237,11 +238,12 @@ export async function listWorkouts(
 export async function getWorkout(
   db: D1Database,
   id: string,
+  includeDeleted = false,
 ): Promise<Workout | null> {
   const row = await db
     .prepare(`
-    SELECT id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at
-    FROM workout WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+    SELECT id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at
+    FROM workout WHERE id = ? AND owner_id = ? ${includeDeleted ? '' : 'AND deleted_at IS NULL'}
   `)
     .bind(id, ownerId)
     .first<WorkoutRow>();
@@ -302,6 +304,7 @@ export async function getWorkout(
     version: Number(row.version),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
     exercises: exerciseResult.results.map((exercise) => ({
       id: exercise.id,
       exerciseId: exercise.exercise_id,
@@ -352,16 +355,27 @@ function makeServerSnapshot(
   operation: WorkoutMutationInput['operation'],
   updatedAt: string,
 ): Workout {
-  const completed = operation === 'complete';
+  const completed = operation === 'complete' || operation === 'edit';
+  const tombstoneOperation = operation === 'delete' || operation === 'restore';
+  const source = tombstoneOperation && existing ? existing : incoming;
   return {
-    ...incoming,
-    status: completed ? 'completed' : 'active',
+    ...source,
+    status: completed || tombstoneOperation ? 'completed' : 'active',
     startedAt: existing?.startedAt ?? incoming.startedAt,
-    endedAt: completed ? (incoming.endedAt ?? updatedAt) : null,
+    endedAt:
+      completed || tombstoneOperation
+        ? (source.endedAt ?? existing?.endedAt ?? updatedAt)
+        : null,
     version: existing ? existing.version + 1 : 1,
     createdAt: existing?.createdAt ?? incoming.createdAt,
     updatedAt,
-    exercises: [...incoming.exercises]
+    deletedAt:
+      operation === 'delete'
+        ? updatedAt
+        : operation === 'restore'
+          ? null
+          : (existing?.deletedAt ?? incoming.deletedAt ?? null),
+    exercises: [...source.exercises]
       .sort((a, b) => a.position - b.position)
       .map((exercise) => ({
         ...exercise,
@@ -384,8 +398,8 @@ function snapshotStatements(
         db
           .prepare(
             `INSERT INTO workout
-              (id, owner_id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at)
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+              (id, owner_id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
              )`,
@@ -404,6 +418,7 @@ function snapshotStatements(
             workout.version,
             workout.createdAt,
             workout.updatedAt,
+            workout.deletedAt,
             mutation.mutationId,
             ownerId,
           ),
@@ -412,7 +427,7 @@ function snapshotStatements(
         db
           .prepare(
             `UPDATE workout
-             SET name = ?, status = ?, local_date = ?, timezone = ?, ended_at = ?, overall_note = ?, rating = ?, version = ?, updated_at = ?
+             SET name = ?, status = ?, local_date = ?, timezone = ?, ended_at = ?, overall_note = ?, rating = ?, version = ?, updated_at = ?, deleted_at = ?
              WHERE id = ? AND owner_id = ? AND version = ?
                AND EXISTS (
                  SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
@@ -428,22 +443,30 @@ function snapshotStatements(
             workout.rating,
             workout.version,
             workout.updatedAt,
+            workout.deletedAt,
             workout.id,
             ownerId,
             mutation.baseVersion,
             mutation.mutationId,
             ownerId,
           ),
-        db
-          .prepare(
-            `DELETE FROM workout_exercise
-             WHERE workout_id = ?
-               AND EXISTS (
-                 SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
-               )`,
-          )
-          .bind(workout.id, mutation.mutationId, ownerId),
       ];
+  if (mutation.operation === 'delete' || mutation.operation === 'restore') {
+    return statements;
+  }
+  if (!creating) {
+    statements.push(
+      db
+        .prepare(
+          `DELETE FROM workout_exercise
+           WHERE workout_id = ?
+             AND EXISTS (
+               SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
+             )`,
+        )
+        .bind(workout.id, mutation.mutationId, ownerId),
+    );
+  }
   for (const exercise of workout.exercises) {
     statements.push(
       db
@@ -510,13 +533,18 @@ async function mutationFingerprint(
   mutation: WorkoutMutationInput,
   includeBaseVersion = true,
 ) {
+  const workout = { ...mutation.payload.workout };
+  // Keep the Phase 1B-1 fingerprint stable for existing non-deleted payloads.
+  // deletedAt is only material to a delete mutation when it has a timestamp.
+  if (workout.deletedAt === null)
+    delete (workout as { deletedAt?: string | null }).deletedAt;
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       entityType: mutation.entityType,
       entityId: mutation.entityId,
       operation: mutation.operation,
       ...(includeBaseVersion ? { baseVersion: mutation.baseVersion } : {}),
-      payload: mutation.payload,
+      payload: { workout },
     }),
   );
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -560,9 +588,19 @@ function assertMutationCanApply(
   if (mutation.baseVersion > existing.version) {
     throw new WorkoutVersionAheadError({ type: 'ahead', ...conflict });
   }
-  if (existing.status === 'completed') {
-    throw new WorkoutConflictError('完了済みワークアウトは編集できません');
-  }
+  const needsActive =
+    mutation.operation === 'replace' || mutation.operation === 'complete';
+  const needsCompleted =
+    mutation.operation === 'edit' || mutation.operation === 'delete';
+  if (needsActive && (existing.status !== 'active' || existing.deletedAt))
+    throw new WorkoutConflictError('進行中ワークアウトに適用できません');
+  if (needsCompleted && (existing.status !== 'completed' || existing.deletedAt))
+    throw new WorkoutConflictError('完了済みワークアウトに適用できません');
+  if (
+    mutation.operation === 'restore' &&
+    (existing.status !== 'completed' || !existing.deletedAt)
+  )
+    throw new WorkoutConflictError('削除済みワークアウトに適用できません');
 }
 
 function mutationMatchesProcessed(
@@ -616,11 +654,17 @@ function processedMutationGate(
           (mutation_id, owner_id, entity_type, entity_id, operation, base_version, request_fingerprint, result_json, processed_at)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE NOT EXISTS (
-           SELECT 1 FROM workout WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
+           SELECT 1 FROM workout WHERE id = ? AND owner_id = ?
          )`,
       )
       .bind(...commonValues, mutation.entityId, ownerId);
   }
+  const operationPredicate =
+    mutation.operation === 'restore'
+      ? "status = 'completed' AND deleted_at IS NOT NULL"
+      : mutation.operation === 'edit' || mutation.operation === 'delete'
+        ? "status = 'completed' AND deleted_at IS NULL"
+        : "status = 'active' AND deleted_at IS NULL";
   return db
     .prepare(
       `INSERT INTO processed_mutation
@@ -628,8 +672,8 @@ function processedMutationGate(
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE EXISTS (
          SELECT 1 FROM workout
-         WHERE id = ? AND owner_id = ? AND deleted_at IS NULL
-           AND version = ? AND status != 'completed'
+         WHERE id = ? AND owner_id = ? AND version = ?
+           AND ${operationPredicate}
        )`,
     )
     .bind(...commonValues, mutation.entityId, ownerId, mutation.baseVersion);
@@ -656,10 +700,11 @@ export async function applyWorkoutMutation(
       );
     }
     const previous = JSON.parse(processed.result_json) as WorkoutMutationResult;
+    previous.workout.deletedAt ??= null;
     return { ...previous, duplicate: true };
   }
 
-  const existing = await getWorkout(db, mutation.entityId);
+  const existing = await getWorkout(db, mutation.entityId, true);
   const creating = mutation.operation === 'create';
   assertMutationCanApply(mutation, existing);
 
@@ -670,7 +715,8 @@ export async function applyWorkoutMutation(
     now(),
   );
   if (mutation.operation === 'complete') assertWorkoutCanComplete(saved);
-  await assertExerciseMastersExist(db, saved.exercises);
+  if (mutation.operation !== 'delete' && mutation.operation !== 'restore')
+    await assertExerciseMastersExist(db, saved.exercises);
   const result: WorkoutMutationResult = {
     mutationId: mutation.mutationId,
     duplicate: false,
@@ -690,12 +736,13 @@ export async function applyWorkoutMutation(
       mutationMatchesProcessed(raced, mutation, fingerprint, legacyFingerprint)
     ) {
       const previous = JSON.parse(raced.result_json) as WorkoutMutationResult;
+      previous.workout.deletedAt ??= null;
       return { ...previous, duplicate: true };
     }
     throw error;
   }
   if (Number(batchResults[0]?.meta.changes ?? 0) === 0) {
-    const latest = await getWorkout(db, mutation.entityId);
+    const latest = await getWorkout(db, mutation.entityId, true);
     assertMutationCanApply(mutation, latest);
     throw new WorkoutConflictError(
       '同期中にサーバー状態が変更されたため保存を停止しました',

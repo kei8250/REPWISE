@@ -10,7 +10,9 @@ import {
   markLocalWorkoutDraftCompleted,
   pruneCompletedWorkoutDrafts,
   saveActiveWorkoutDraft,
+  saveCompletedWorkoutEditDraft,
   saveWorkoutDraftAndEnqueueMutation,
+  selectWorkoutDetailForDisplay,
   selectWorkoutForRestore,
   WORKOUT_MUTATION_STORE_NAME,
 } from '@/lib/workouts/local-drafts';
@@ -87,6 +89,7 @@ function activeWorkout(): Workout {
     version: 2,
     createdAt: serverTime,
     updatedAt: serverTime,
+    deletedAt: null,
     exercises: [
       workoutExercise('bench', 0, 3),
       workoutExercise('row', 1, 2),
@@ -412,5 +415,83 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
       ),
     ).toEqual([5, 6]);
     await closeLocalDraftDatabase(databaseName);
+  });
+
+  it('完了済み編集を進行中下書きと分離し、再読み込み後も復元する', async () => {
+    const server = activeWorkout();
+    server.status = 'completed';
+    server.endedAt = localTime;
+    server.version = 4;
+    const edited = structuredClone(server);
+    edited.name = '再読み込み後も残る編集';
+    edited.exercises[0].sets[0].actualLoadGrams = 72_500;
+    await saveCompletedWorkoutEditDraft(edited, {
+      localUpdatedAt: localTime,
+      serverUpdatedAt: serverTime,
+    });
+    await closeLocalDraftDatabase();
+
+    const restored = await getLocalWorkoutDraft(edited.id);
+    expect(restored).toMatchObject({
+      draftStatus: 'completed_edit',
+      serverVersion: 4,
+      workout: { name: '再読み込み後も残る編集' },
+    });
+    expect(await getLatestActiveWorkoutDraft()).toBeNull();
+    const newerServer = structuredClone(server);
+    newerServer.updatedAt = '2026-09-02T09:00:00.000Z';
+    expect(
+      selectWorkoutDetailForDisplay(newerServer, restored).workout?.name,
+    ).toBe('再読み込み後も残る編集');
+  });
+
+  it('未送信の完了済みeditを集約し、delete・restoreをFIFOでversion接続する', async () => {
+    const completed = activeWorkout();
+    completed.status = 'completed';
+    completed.endedAt = localTime;
+    completed.version = 7;
+    await markLocalWorkoutDraftCompleted(completed);
+    completed.overallNote = '古い編集';
+    await saveWorkoutDraftAndEnqueueMutation(completed, 'edit');
+    completed.overallNote = '最新編集';
+    await saveWorkoutDraftAndEnqueueMutation(completed, 'edit');
+    const deleted = { ...completed, deletedAt: localTime };
+    await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete');
+    await saveWorkoutDraftAndEnqueueMutation(
+      { ...deleted, deletedAt: null },
+      'restore',
+    );
+
+    expect(
+      (await listWorkoutMutations(completed.id)).map((item) => ({
+        operation: item.operation,
+        baseVersion: item.baseVersion,
+        note: item.payload.workout.overallNote,
+      })),
+    ).toEqual([
+      { operation: 'edit', baseVersion: 7, note: '最新編集' },
+      { operation: 'delete', baseVersion: 8, note: '最新編集' },
+      { operation: 'restore', baseVersion: 9, note: '最新編集' },
+    ]);
+    expect((await getLocalWorkoutDraft(completed.id))?.draftStatus).toBe(
+      'completed',
+    );
+  });
+
+  it('保存途中の完了済み編集は保持期間を過ぎても削除しない', async () => {
+    const completed = activeWorkout();
+    completed.status = 'completed';
+    completed.endedAt = serverTime;
+    await saveCompletedWorkoutEditDraft(completed, {
+      localUpdatedAt: serverTime,
+    });
+
+    const removed = await pruneCompletedWorkoutDrafts(
+      Date.parse(serverTime) + 30 * 24 * 60 * 60 * 1000,
+    );
+    expect(removed).toBe(0);
+    expect((await getLocalWorkoutDraft(completed.id))?.draftStatus).toBe(
+      'completed_edit',
+    );
   });
 });

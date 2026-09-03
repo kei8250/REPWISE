@@ -31,6 +31,7 @@ function workout(): Workout {
     version: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
+    deletedAt: null,
     exercises: [],
   };
 }
@@ -196,5 +197,85 @@ describe('Phase 1B-1b retry queue', () => {
     expect((await getLocalWorkoutDraft(local.id))?.workout.overallNote).toBe(
       '失ってはいけないローカル記録',
     );
+  });
+
+  it('完了済み編集の競合でもローカル編集を保持して自動再送を停止する', async () => {
+    const local = workout();
+    local.status = 'completed';
+    local.endedAt = timestamp;
+    local.version = 5;
+    local.overallNote = '保持する完了済み編集';
+    await saveWorkoutDraftAndEnqueueMutation(local, 'edit');
+    const fetcher = vi.fn(async () =>
+      Response.json(
+        {
+          error: '別の変更が存在します',
+          code: 'WORKOUT_VERSION_CONFLICT',
+          conflict: {
+            type: 'stale',
+            baseVersion: 5,
+            serverVersion: 6,
+            serverUpdatedAt: timestamp,
+          },
+        },
+        { status: 409 },
+      ),
+    );
+
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect((await listWorkoutMutations(local.id))[0]).toMatchObject({
+      operation: 'edit',
+      syncStatus: 'conflict',
+      baseVersion: 5,
+    });
+    expect(await getLocalWorkoutDraft(local.id)).toMatchObject({
+      draftStatus: 'completed_edit',
+      workout: { overallNote: '保持する完了済み編集' },
+    });
+  });
+
+  it('soft deleteとrestoreの成功ackでローカル状態とversionを更新する', async () => {
+    const local = workout();
+    local.status = 'completed';
+    local.endedAt = timestamp;
+    local.version = 2;
+    local.deletedAt = timestamp;
+    await saveWorkoutDraftAndEnqueueMutation(local, 'delete');
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string')
+          throw new Error('JSON bodyが必要です');
+        const input = JSON.parse(init.body) as WorkoutMutationInput;
+        return Response.json({
+          mutationId: input.mutationId,
+          duplicate: false,
+          workout: {
+            ...input.payload.workout,
+            version: input.baseVersion + 1,
+          },
+        });
+      },
+    );
+
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+    expect(await getLocalWorkoutDraft(local.id)).toMatchObject({
+      draftStatus: 'deleted',
+      serverVersion: 3,
+      workout: { deletedAt: timestamp },
+    });
+
+    local.deletedAt = null;
+    local.version = 2;
+    await saveWorkoutDraftAndEnqueueMutation(local, 'restore');
+    expect((await listWorkoutMutations(local.id))[0].baseVersion).toBe(3);
+    await syncPendingWorkoutMutations(local.id, { fetcher });
+    expect(await getLocalWorkoutDraft(local.id)).toMatchObject({
+      draftStatus: 'completed',
+      serverVersion: 4,
+      workout: { deletedAt: null },
+    });
   });
 });

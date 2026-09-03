@@ -15,7 +15,11 @@ export const LOCAL_DRAFT_SCHEMA_VERSION = 1;
 export const LOCAL_DATABASE_VERSION = 3;
 export const COMPLETED_DRAFT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type LocalDraftStatus = 'active' | 'completed';
+export type LocalDraftStatus =
+  | 'active'
+  | 'completed'
+  | 'completed_edit'
+  | 'deleted';
 
 export interface LocalWorkoutDraft {
   workoutId: string;
@@ -151,7 +155,7 @@ function createDraftRecord(
         : (workout.updatedAt ?? null),
     serverVersion: workout.version ?? null,
     completedAt:
-      draftStatus === 'completed' ? (workout.endedAt ?? timestamp) : null,
+      draftStatus === 'active' ? null : (workout.endedAt ?? timestamp),
   };
 }
 
@@ -199,14 +203,22 @@ function transactionComplete(transaction: IDBTransaction) {
 function isLocalWorkoutDraft(value: unknown): value is LocalWorkoutDraft {
   if (!value || typeof value !== 'object') return false;
   const draft = value as Partial<LocalWorkoutDraft>;
-  return (
+  const valid =
     draft.schemaVersion === LOCAL_DRAFT_SCHEMA_VERSION &&
     typeof draft.workoutId === 'string' &&
-    (draft.draftStatus === 'active' || draft.draftStatus === 'completed') &&
+    ['active', 'completed', 'completed_edit', 'deleted'].includes(
+      draft.draftStatus ?? '',
+    ) &&
     typeof draft.localUpdatedAt === 'string' &&
     !!draft.workout &&
-    draft.workout.id === draft.workoutId
-  );
+    draft.workout.id === draft.workoutId;
+  if (
+    valid &&
+    !Object.prototype.hasOwnProperty.call(draft.workout, 'deletedAt')
+  ) {
+    (draft.workout as Workout).deletedAt = null;
+  }
+  return valid;
 }
 
 export async function saveActiveWorkoutDraft(
@@ -222,6 +234,34 @@ export async function saveActiveWorkoutDraft(
   const complete = transactionComplete(transaction);
   const record = createDraftRecord(workout, 'active', options);
   transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(record);
+  await complete;
+  return record;
+}
+
+export async function saveCompletedWorkoutEditDraft(
+  workout: Workout,
+  options: {
+    localUpdatedAt?: string;
+    serverUpdatedAt?: string | null;
+    databaseName?: string;
+  } = {},
+) {
+  const database = await openDatabase(options.databaseName);
+  const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const currentValue = await requestResult(store.get(workout.id));
+  const current = isLocalWorkoutDraft(currentValue) ? currentValue : null;
+  const record = createDraftRecord(workout, 'completed_edit', {
+    ...options,
+    serverUpdatedAt:
+      options.serverUpdatedAt ?? current?.serverUpdatedAt ?? workout.updatedAt,
+  });
+  record.serverVersion =
+    current?.draftStatus === 'completed_edit'
+      ? current.serverVersion
+      : workout.version;
+  store.put(record);
   await complete;
   return record;
 }
@@ -244,7 +284,13 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const localUpdatedAt = options.localUpdatedAt ?? new Date().toISOString();
   const draft = createDraftRecord(
     workout,
-    operation === 'complete' ? 'completed' : 'active',
+    operation === 'delete'
+      ? 'deleted'
+      : operation === 'edit'
+        ? 'completed_edit'
+        : operation === 'complete' || operation === 'restore'
+          ? 'completed'
+          : 'active',
     { ...options, localUpdatedAt },
   );
   const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
@@ -257,10 +303,10 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     .filter(isWorkoutMutation)
     .sort((a, b) => a.sequence - b.sequence);
   const superseded =
-    operation === 'replace'
+    operation === 'replace' || operation === 'edit'
       ? existingMutations.filter(
           (value) =>
-            value.operation === 'replace' &&
+            value.operation === operation &&
             value.syncStatus === 'pending' &&
             value.retryCount === 0,
         )
@@ -310,7 +356,9 @@ function isWorkoutMutation(value: unknown): value is WorkoutMutation {
     mutation.entityType === 'workout' &&
     typeof mutation.entityId === 'string' &&
     typeof mutation.workoutId === 'string' &&
-    ['create', 'replace', 'complete'].includes(mutation.operation ?? '') &&
+    ['create', 'replace', 'complete', 'edit', 'delete', 'restore'].includes(
+      mutation.operation ?? '',
+    ) &&
     typeof mutation.baseVersion === 'number' &&
     Number.isInteger(mutation.baseVersion) &&
     mutation.baseVersion >= 0 &&
@@ -421,13 +469,20 @@ export async function acknowledgeWorkoutMutation(
     const syncedWorkout = isLatestSnapshot
       ? structuredClone(serverWorkout)
       : current.workout;
+    const acknowledgedDraftStatus: LocalDraftStatus =
+      mutation.operation === 'delete'
+        ? 'deleted'
+        : mutation.operation === 'edit' ||
+            mutation.operation === 'restore' ||
+            mutation.operation === 'complete'
+          ? 'completed'
+          : 'active';
     drafts.put({
       ...current,
       workout: syncedWorkout,
-      draftStatus:
-        syncedWorkout.status === 'completed'
-          ? 'completed'
-          : current.draftStatus,
+      draftStatus: hasLaterMutation
+        ? current.draftStatus
+        : acknowledgedDraftStatus,
       completedAt:
         syncedWorkout.status === 'completed'
           ? (syncedWorkout.endedAt ?? current.completedAt)
@@ -539,6 +594,11 @@ export function selectWorkoutDetailForDisplay(
       : { workout: null, source: 'none' };
   }
   if (!serverWorkout) return { workout: localDraft.workout, source: 'local' };
+  if (
+    localDraft.draftStatus === 'completed_edit' ||
+    localDraft.draftStatus === 'deleted'
+  )
+    return { workout: localDraft.workout, source: 'local' };
   if (hasPendingMutations)
     return { workout: localDraft.workout, source: 'local' };
   const localUpdatedAt = Date.parse(localDraft.localUpdatedAt);

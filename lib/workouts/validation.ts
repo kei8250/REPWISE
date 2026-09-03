@@ -384,6 +384,7 @@ export function validateWorkoutSnapshot(
       1,
     createdAt: timestamp(input.createdAt, 'createdAt', issues) ?? '',
     updatedAt: timestamp(input.updatedAt, 'updatedAt', issues) ?? '',
+    deletedAt: timestamp(input.deletedAt, 'deletedAt', issues, true),
     exercises: exercises.sort((a, b) => a.position - b.position),
   };
   if (expectedId && result.id !== expectedId)
@@ -434,7 +435,9 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
   ) as WorkoutMutationOperation;
   if (
     operation &&
-    !(['create', 'replace', 'complete'] as const).includes(operation)
+    !(
+      ['create', 'replace', 'complete', 'edit', 'delete', 'restore'] as const
+    ).includes(operation)
   ) {
     issues.push({ path: 'operation', message: '同期操作が正しくありません' });
   }
@@ -454,13 +457,19 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
     if (error instanceof WorkoutValidationError) issues.push(...error.issues);
     else throw error;
   }
-  if (operation === 'complete' && workout?.status !== 'completed') {
+  if (
+    ['complete', 'edit', 'delete', 'restore'].includes(operation) &&
+    workout?.status !== 'completed'
+  ) {
     issues.push({
       path: 'payload.workout.status',
       message: '完了状態が必要です',
     });
   }
-  if (operation !== 'complete' && workout?.status !== 'active') {
+  if (
+    ['create', 'replace'].includes(operation) &&
+    workout?.status !== 'active'
+  ) {
     issues.push({
       path: 'payload.workout.status',
       message: '進行中状態が必要です',

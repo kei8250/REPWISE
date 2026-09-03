@@ -26,9 +26,9 @@ export async function POST(request: Request) {
     const db = getD1();
     const current = await getWorkout(db, workoutId);
     if (!current) throw new WorkoutNotFoundError();
-    if (current.status !== 'active') {
+    if (current.status !== 'active' && current.status !== 'completed') {
       throw new WorkoutConflictError(
-        '完了済みワークアウトは競合検証に使用できません',
+        'このワークアウトは競合検証に使用できません',
       );
     }
     const marker = `[競合検証 server v${current.version + 1}]`;
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       mutationId: crypto.randomUUID(),
       entityType: 'workout',
       entityId: current.id,
-      operation: 'replace',
+      operation: current.status === 'completed' ? 'edit' : 'replace',
       baseVersion: current.version,
       payload: {
         workout: {

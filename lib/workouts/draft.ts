@@ -21,6 +21,7 @@ export function createLocalWorkout(input: CreateWorkoutInput): Workout {
     version: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
+    deletedAt: null,
     exercises: [],
   };
 }

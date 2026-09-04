@@ -32,6 +32,7 @@ function workout(): Workout {
     createdAt: timestamp,
     updatedAt: timestamp,
     deletedAt: null,
+    sourceWorkoutId: null,
     exercises: [],
   };
 }

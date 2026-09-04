@@ -6,6 +6,7 @@ import {
   getWorkout,
   listWorkouts,
 } from '@/lib/workouts/server-store';
+import { copyWorkoutForToday } from '@/lib/workouts/draft';
 import type {
   Workout,
   WorkoutExercise,
@@ -137,6 +138,7 @@ function workout(): Workout {
     createdAt: timestamp,
     updatedAt: timestamp,
     deletedAt: null,
+    sourceWorkoutId: null,
     exercises: [exercise('we-bench', 'ex-bench-press', 'ベンチプレス', 0)],
   };
 }
@@ -180,6 +182,7 @@ async function createCompletedWorkout(prefix: string) {
 async function legacyFingerprint(input: WorkoutMutationInput) {
   const workout = { ...input.payload.workout };
   delete (workout as { deletedAt?: string | null }).deletedAt;
+  delete (workout as { sourceWorkoutId?: string | null }).sourceWorkoutId;
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       entityType: input.entityType,
@@ -205,6 +208,7 @@ beforeEach(() => {
     '0001_gray_magma.sql',
     '0002_chilly_wallop.sql',
     '0003_jazzy_karnak.sql',
+    '0004_grey_kinsey_walden.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),
@@ -647,5 +651,85 @@ describe('Phase 1B-2a completed workout changes', () => {
       deletedAt: null,
       overallNote: '削除前のサーバー変更',
     });
+  });
+});
+
+describe('Phase 1B-2b copied workout persistence', () => {
+  it('完了済みworkoutから別IDの新規workoutを冪等に作成し、元を変更しない', async () => {
+    const source = await createCompletedWorkout('copy-source');
+    const copied = copyWorkoutForToday(source.workout, {
+      timestamp: '2026-09-04T08:30:00.000Z',
+      localDate: '2026-09-04',
+      timezone: 'Asia/Tokyo',
+      idFactory: (() => {
+        let value = 0;
+        return () => `copied-id-${value++}`;
+      })(),
+    });
+    const input = mutation('copy-create-mutation', 'create', copied, 0);
+
+    const first = await applyWorkoutMutation(d1, input);
+    const replay = await applyWorkoutMutation(d1, input);
+
+    expect(first).toMatchObject({
+      duplicate: false,
+      workout: {
+        id: 'copied-id-0',
+        sourceWorkoutId: source.workout.id,
+        status: 'active',
+      },
+    });
+    expect(replay).toMatchObject({
+      duplicate: true,
+      workout: { id: 'copied-id-0', version: 1 },
+    });
+    const changedCopy = structuredClone(first.workout);
+    changedCopy.name = 'コピー後に変更';
+    changedCopy.exercises[0].sets[0].actualLoadGrams = 85_000;
+    changedCopy.exercises[0].sets[0].actualReps = 8;
+    await applyWorkoutMutation(
+      d1,
+      mutation('copy-change-mutation', 'replace', changedCopy, 1),
+    );
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM workout').get(),
+    ).toMatchObject({ count: 2 });
+    expect(
+      sqlite
+        .prepare('SELECT version, deleted_at FROM workout WHERE id = ?')
+        .get(source.workout.id),
+    ).toMatchObject({ version: 2, deleted_at: null });
+    expect(await getWorkout(d1, source.workout.id)).toMatchObject({
+      name: '冪等性テスト',
+      version: 2,
+    });
+    expect(
+      sqlite
+        .prepare('SELECT source_workout_id FROM workout WHERE id = ?')
+        .get(copied.id),
+    ).toMatchObject({ source_workout_id: source.workout.id });
+  });
+
+  it('soft deleted workoutをコピー元にしたcreateを拒否する', async () => {
+    const source = await createCompletedWorkout('copy-deleted-source');
+    await applyWorkoutMutation(
+      d1,
+      mutation('copy-source-delete', 'delete', source.workout, 2),
+    );
+    const copied = workout();
+    copied.id = 'copy-from-deleted';
+    copied.sourceWorkoutId = source.workout.id;
+
+    await expect(
+      applyWorkoutMutation(
+        d1,
+        mutation('copy-from-deleted-create', 'create', copied, 0),
+      ),
+    ).rejects.toThrow('コピー元');
+    expect(
+      sqlite
+        .prepare('SELECT COUNT(*) AS count FROM workout WHERE id = ?')
+        .get(copied.id),
+    ).toMatchObject({ count: 0 });
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -8,6 +8,7 @@ import {
   CloudOff,
   LoaderCircle,
   Pencil,
+  Play,
   RotateCcw,
   Trash2,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getWorkout } from '@/lib/workouts/api-client';
+import { copyWorkoutForToday } from '@/lib/workouts/draft';
 import {
   getLocalWorkoutDraft,
   listWorkoutMutations,
@@ -40,7 +42,7 @@ import {
   syncPendingWorkoutMutations,
 } from '@/lib/workouts/sync-queue';
 import type { Workout } from '@/lib/workouts/types';
-import { APP_ROUTES } from '@/lib/routes';
+import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { CompletedWorkoutEditor } from './completed-workout-editor';
 import { ReviewConflictControl } from './review-conflict-control';
 
@@ -60,6 +62,8 @@ export function WorkoutDetail({ id }: { id: string }) {
   const [serverReviewError, setServerReviewError] = useState<string | null>(
     null,
   );
+  const [startingCopy, setStartingCopy] = useState(false);
+  const startingCopyRef = useRef(false);
 
   const refreshSyncState = useCallback(async () => {
     const queue = await getWorkoutQueueState(id);
@@ -246,6 +250,38 @@ export function WorkoutDetail({ id }: { id: string }) {
     await refreshLocalWorkout();
   }
 
+  async function startSameMenu() {
+    if (
+      !workout ||
+      workout.status !== 'completed' ||
+      workout.deletedAt ||
+      syncState === 'conflict' ||
+      startingCopyRef.current
+    ) {
+      return;
+    }
+    startingCopyRef.current = true;
+    setStartingCopy(true);
+    setError(null);
+    try {
+      const copied = copyWorkoutForToday(workout);
+      await saveWorkoutDraftAndEnqueueMutation(copied, 'create', {
+        localUpdatedAt: copied.updatedAt,
+        serverUpdatedAt: null,
+      });
+      void syncPendingWorkoutMutations(copied.id).catch(() => undefined);
+      navigateTo(APP_ROUTES.activeWorkout(copied.id));
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : '同じメニューを開始できませんでした',
+      );
+      startingCopyRef.current = false;
+      setStartingCopy(false);
+    }
+  }
+
   if (!workout)
     return (
       <div className="grid min-h-72 place-items-center">
@@ -381,6 +417,15 @@ export function WorkoutDetail({ id }: { id: string }) {
 
           <ReviewConflictControl workoutId={workout.id} />
 
+          {error && (
+            <p
+              role="alert"
+              className="rounded-xl bg-destructive/10 p-3 text-sm font-bold text-destructive"
+            >
+              {error}
+            </p>
+          )}
+
           {syncState === 'conflict' && (
             <div
               role="alert"
@@ -498,47 +543,62 @@ export function WorkoutDetail({ id }: { id: string }) {
                 </Card>
               )}
               {workout.status === 'completed' && (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-3">
                   <Button
                     type="button"
-                    variant="outline"
-                    className="h-11"
-                    onClick={() => void beginEdit()}
+                    className="h-12 w-full"
+                    onClick={() => void startSameMenu()}
+                    disabled={startingCopy || syncState === 'conflict'}
                   >
-                    <Pencil /> 編集
+                    {startingCopy ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Play />
+                    )}
+                    {startingCopy ? '準備中…' : '同じメニューで開始'}
                   </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          className="h-11"
-                        >
-                          <Trash2 /> 削除
-                        </Button>
-                      }
-                    />
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          このワークアウトを削除しますか？
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          履歴から非表示になります。削除後も「元に戻す」で復元できます。
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>キャンセル</AlertDialogCancel>
-                        <AlertDialogAction
-                          variant="destructive"
-                          onClick={() => void deleteWorkout()}
-                        >
-                          削除する
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11"
+                      onClick={() => void beginEdit()}
+                    >
+                      <Pencil /> 編集
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            className="h-11"
+                          >
+                            <Trash2 /> 削除
+                          </Button>
+                        }
+                      />
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            このワークアウトを削除しますか？
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            履歴から非表示になります。削除後も「元に戻す」で復元できます。
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>キャンセル</AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="destructive"
+                            onClick={() => void deleteWorkout()}
+                          >
+                            削除する
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
               )}
             </>

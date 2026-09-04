@@ -30,6 +30,18 @@ describe('v2 SQLite schema persistence', () => {
         'utf8',
       ),
     );
+    db.exec(
+      readFileSync(
+        new URL('../drizzle/0003_jazzy_karnak.sql', import.meta.url),
+        'utf8',
+      ),
+    );
+    db.exec(
+      readFileSync(
+        new URL('../drizzle/0004_grey_kinsey_walden.sql', import.meta.url),
+        'utf8',
+      ),
+    );
     const timestamp = '2026-09-01T09:00:00.000Z';
     db.prepare(
       "INSERT INTO workout (id, owner_id, name, status, local_date, timezone, started_at, overall_note, version, created_at, updated_at) VALUES (?, 'default', ?, 'active', ?, 'Asia/Tokyo', ?, '', 1, ?, ?)",
@@ -126,6 +138,13 @@ describe('v2 SQLite schema persistence', () => {
         )
         .get(),
     ).toMatchObject({ name: 'processed_mutation' });
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('workout') WHERE name = 'source_workout_id'",
+        )
+        .get(),
+    ).toMatchObject({ name: 'source_workout_id' });
     db.close();
   });
 });

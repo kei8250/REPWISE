@@ -63,6 +63,7 @@ export interface Workout {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  sourceWorkoutId: string | null;
   exercises: WorkoutExercise[];
 }
 

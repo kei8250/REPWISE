@@ -107,10 +107,12 @@ export const workouts = sqliteTable(
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
     deletedAt: text('deleted_at'),
+    sourceWorkoutId: text('source_workout_id'),
   },
   (table) => [
     index('idx_workout_owner_date').on(table.ownerId, table.localDate),
     index('idx_workout_owner_status').on(table.ownerId, table.status),
+    index('idx_workout_owner_source').on(table.ownerId, table.sourceWorkoutId),
   ],
 );
 

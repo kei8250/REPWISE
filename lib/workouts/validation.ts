@@ -149,6 +149,11 @@ function id(value: unknown, path: string, issues: ValidationIssue[]) {
   return result;
 }
 
+function nullableId(value: unknown, path: string, issues: ValidationIssue[]) {
+  if (value === null || value === undefined || value === '') return null;
+  return id(value, path, issues);
+}
+
 export function normalizeExerciseName(value: string) {
   return value.normalize('NFKC').trim().toLocaleLowerCase('ja-JP');
 }
@@ -385,10 +390,20 @@ export function validateWorkoutSnapshot(
     createdAt: timestamp(input.createdAt, 'createdAt', issues) ?? '',
     updatedAt: timestamp(input.updatedAt, 'updatedAt', issues) ?? '',
     deletedAt: timestamp(input.deletedAt, 'deletedAt', issues, true),
+    sourceWorkoutId: nullableId(
+      input.sourceWorkoutId,
+      'sourceWorkoutId',
+      issues,
+    ),
     exercises: exercises.sort((a, b) => a.position - b.position),
   };
   if (expectedId && result.id !== expectedId)
     issues.push({ path: 'id', message: 'URLのワークアウトIDと一致しません' });
+  if (result.sourceWorkoutId === result.id)
+    issues.push({
+      path: 'sourceWorkoutId',
+      message: 'コピー元と新しいワークアウトのIDは分けてください',
+    });
   if (result.localDate && !/^\d{4}-\d{2}-\d{2}$/.test(result.localDate))
     issues.push({
       path: 'localDate',

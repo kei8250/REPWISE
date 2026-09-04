@@ -90,6 +90,7 @@ function activeWorkout(): Workout {
     createdAt: serverTime,
     updatedAt: serverTime,
     deletedAt: null,
+    sourceWorkoutId: null,
     exercises: [
       workoutExercise('bench', 0, 3),
       workoutExercise('row', 1, 2),

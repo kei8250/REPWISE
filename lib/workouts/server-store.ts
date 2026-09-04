@@ -36,6 +36,7 @@ type WorkoutRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  source_workout_id: string | null;
 };
 
 type ExerciseRow = {
@@ -242,7 +243,7 @@ export async function getWorkout(
 ): Promise<Workout | null> {
   const row = await db
     .prepare(`
-    SELECT id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at
+    SELECT id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at, source_workout_id
     FROM workout WHERE id = ? AND owner_id = ? ${includeDeleted ? '' : 'AND deleted_at IS NULL'}
   `)
     .bind(id, ownerId)
@@ -305,6 +306,7 @@ export async function getWorkout(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+    sourceWorkoutId: row.source_workout_id,
     exercises: exerciseResult.results.map((exercise) => ({
       id: exercise.id,
       exerciseId: exercise.exercise_id,
@@ -339,6 +341,22 @@ async function assertExerciseMastersExist(
     throw new WorkoutNotFoundError('選択された種目が見つかりません');
 }
 
+async function assertCopySourceAvailable(db: D1Database, workout: Workout) {
+  if (!workout.sourceWorkoutId) return;
+  const source = await db
+    .prepare(
+      `SELECT id FROM workout
+       WHERE id = ? AND owner_id = ? AND status = 'completed' AND deleted_at IS NULL`,
+    )
+    .bind(workout.sourceWorkoutId, ownerId)
+    .first<{ id: string }>();
+  if (!source) {
+    throw new WorkoutNotFoundError(
+      'コピー元の完了済みワークアウトが見つかりません',
+    );
+  }
+}
+
 function assertWorkoutCanComplete(workout: Workout) {
   if (!workout.exercises.length)
     throw new WorkoutConflictError('種目を1つ以上追加してください');
@@ -369,6 +387,9 @@ function makeServerSnapshot(
     version: existing ? existing.version + 1 : 1,
     createdAt: existing?.createdAt ?? incoming.createdAt,
     updatedAt,
+    sourceWorkoutId: existing
+      ? existing.sourceWorkoutId
+      : incoming.sourceWorkoutId,
     deletedAt:
       operation === 'delete'
         ? updatedAt
@@ -398,8 +419,8 @@ function snapshotStatements(
         db
           .prepare(
             `INSERT INTO workout
-              (id, owner_id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at)
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+              (id, owner_id, name, status, local_date, timezone, started_at, ended_at, overall_note, rating, version, created_at, updated_at, deleted_at, source_workout_id)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
              )`,
@@ -419,6 +440,7 @@ function snapshotStatements(
             workout.createdAt,
             workout.updatedAt,
             workout.deletedAt,
+            workout.sourceWorkoutId,
             mutation.mutationId,
             ownerId,
           ),
@@ -427,7 +449,7 @@ function snapshotStatements(
         db
           .prepare(
             `UPDATE workout
-             SET name = ?, status = ?, local_date = ?, timezone = ?, ended_at = ?, overall_note = ?, rating = ?, version = ?, updated_at = ?, deleted_at = ?
+             SET name = ?, status = ?, local_date = ?, timezone = ?, ended_at = ?, overall_note = ?, rating = ?, version = ?, updated_at = ?, deleted_at = ?, source_workout_id = ?
              WHERE id = ? AND owner_id = ? AND version = ?
                AND EXISTS (
                  SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
@@ -444,6 +466,7 @@ function snapshotStatements(
             workout.version,
             workout.updatedAt,
             workout.deletedAt,
+            workout.sourceWorkoutId,
             workout.id,
             ownerId,
             mutation.baseVersion,
@@ -538,6 +561,10 @@ async function mutationFingerprint(
   // deletedAt is only material to a delete mutation when it has a timestamp.
   if (workout.deletedAt === null)
     delete (workout as { deletedAt?: string | null }).deletedAt;
+  // Phase 1B-2b adds lineage. Omitting a null value keeps fingerprints from
+  // older queued and already-processed mutations stable.
+  if (workout.sourceWorkoutId === null)
+    delete (workout as { sourceWorkoutId?: string | null }).sourceWorkoutId;
   const bytes = new TextEncoder().encode(
     JSON.stringify({
       entityType: mutation.entityType,
@@ -648,6 +675,13 @@ function processedMutationGate(
     processedAt,
   ] as const;
   if (mutation.operation === 'create') {
+    const sourceWorkoutId = mutation.payload.workout.sourceWorkoutId;
+    const sourcePredicate = sourceWorkoutId
+      ? `AND EXISTS (
+           SELECT 1 FROM workout
+           WHERE id = ? AND owner_id = ? AND status = 'completed' AND deleted_at IS NULL
+         )`
+      : '';
     return db
       .prepare(
         `INSERT INTO processed_mutation
@@ -655,9 +689,14 @@ function processedMutationGate(
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE NOT EXISTS (
            SELECT 1 FROM workout WHERE id = ? AND owner_id = ?
-         )`,
+         ) ${sourcePredicate}`,
       )
-      .bind(...commonValues, mutation.entityId, ownerId);
+      .bind(
+        ...commonValues,
+        mutation.entityId,
+        ownerId,
+        ...(sourceWorkoutId ? [sourceWorkoutId, ownerId] : []),
+      );
   }
   const operationPredicate =
     mutation.operation === 'restore'
@@ -701,6 +740,7 @@ export async function applyWorkoutMutation(
     }
     const previous = JSON.parse(processed.result_json) as WorkoutMutationResult;
     previous.workout.deletedAt ??= null;
+    previous.workout.sourceWorkoutId ??= null;
     return { ...previous, duplicate: true };
   }
 
@@ -715,6 +755,7 @@ export async function applyWorkoutMutation(
     now(),
   );
   if (mutation.operation === 'complete') assertWorkoutCanComplete(saved);
+  if (creating) await assertCopySourceAvailable(db, saved);
   if (mutation.operation !== 'delete' && mutation.operation !== 'restore')
     await assertExerciseMastersExist(db, saved.exercises);
   const result: WorkoutMutationResult = {
@@ -737,6 +778,7 @@ export async function applyWorkoutMutation(
     ) {
       const previous = JSON.parse(raced.result_json) as WorkoutMutationResult;
       previous.workout.deletedAt ??= null;
+      previous.workout.sourceWorkoutId ??= null;
       return { ...previous, duplicate: true };
     }
     throw error;
@@ -744,6 +786,7 @@ export async function applyWorkoutMutation(
   if (Number(batchResults[0]?.meta.changes ?? 0) === 0) {
     const latest = await getWorkout(db, mutation.entityId, true);
     assertMutationCanApply(mutation, latest);
+    if (creating) await assertCopySourceAvailable(db, saved);
     throw new WorkoutConflictError(
       '同期中にサーバー状態が変更されたため保存を停止しました',
     );

@@ -218,6 +218,12 @@ function isLocalWorkoutDraft(value: unknown): value is LocalWorkoutDraft {
   ) {
     (draft.workout as Workout).deletedAt = null;
   }
+  if (
+    valid &&
+    !Object.prototype.hasOwnProperty.call(draft.workout, 'sourceWorkoutId')
+  ) {
+    (draft.workout as Workout).sourceWorkoutId = null;
+  }
   return valid;
 }
 

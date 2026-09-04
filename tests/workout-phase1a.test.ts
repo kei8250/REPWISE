@@ -75,6 +75,7 @@ function workout(): Workout {
     createdAt: timestamp,
     updatedAt: timestamp,
     deletedAt: null,
+    sourceWorkoutId: null,
     exercises: [
       exercise('squat', 0, 3),
       exercise('rdl', 1, 2),

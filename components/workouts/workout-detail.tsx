@@ -26,7 +26,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { getWorkout } from '@/lib/workouts/api-client';
+import { getWorkout, WorkoutApiError } from '@/lib/workouts/api-client';
 import { copyWorkoutForToday } from '@/lib/workouts/draft';
 import {
   getLocalWorkoutDraft,
@@ -111,10 +111,15 @@ export function WorkoutDetail({ id }: { id: string }) {
         localResult.status === 'fulfilled' ? localResult.value : null;
       const queued =
         queueResult.status === 'fulfilled' ? queueResult.value : [];
+      const serverKnownMissing =
+        serverResult.status === 'rejected' &&
+        serverResult.reason instanceof WorkoutApiError &&
+        serverResult.reason.status === 404;
       const selected = selectWorkoutDetailForDisplay(
         server,
         local,
         queued.length > 0,
+        serverKnownMissing,
       );
       if (server) setServerBaseline(server);
       if (selected.workout) {

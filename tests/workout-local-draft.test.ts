@@ -446,6 +446,26 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     ).toBe('再読み込み後も残る編集');
   });
 
+  it('サーバーで削除済みと確定した完了履歴を古いローカル記録から表示しない', async () => {
+    const completed = activeWorkout();
+    completed.status = 'completed';
+    completed.endedAt = localTime;
+    await markLocalWorkoutDraftCompleted(completed);
+    const local = await getLocalWorkoutDraft(completed.id);
+
+    expect(
+      selectWorkoutDetailForDisplay(null, local, false, true),
+    ).toMatchObject({ workout: null, source: 'none' });
+    expect(
+      selectWorkoutDetailForDisplay(
+        null,
+        local ? { ...local, draftStatus: 'deleted' } : null,
+        false,
+        true,
+      ).workout?.id,
+    ).toBe(completed.id);
+  });
+
   it('未送信の完了済みeditを集約し、delete・restoreをFIFOでversion接続する', async () => {
     const completed = activeWorkout();
     completed.status = 'completed';

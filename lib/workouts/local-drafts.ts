@@ -593,11 +593,19 @@ export function selectWorkoutDetailForDisplay(
   serverWorkout: Workout | null,
   localDraft: LocalWorkoutDraft | null,
   hasPendingMutations = false,
+  serverKnownMissing = false,
 ): WorkoutRestoreResult {
   if (!localDraft) {
     return serverWorkout
       ? { workout: serverWorkout, source: 'server' }
       : { workout: null, source: 'none' };
+  }
+  if (
+    serverKnownMissing &&
+    localDraft.draftStatus === 'completed' &&
+    !hasPendingMutations
+  ) {
+    return { workout: null, source: 'none' };
   }
   if (!serverWorkout) return { workout: localDraft.workout, source: 'local' };
   if (

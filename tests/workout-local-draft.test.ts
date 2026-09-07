@@ -466,6 +466,24 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     ).toBe(completed.id);
   });
 
+  it('404確認後にrestoreが成功した新versionは再表示できる', async () => {
+    const completed = activeWorkout();
+    completed.status = 'completed';
+    completed.endedAt = localTime;
+    completed.version = 7;
+    await markLocalWorkoutDraftCompleted(completed);
+    const before = await getLocalWorkoutDraft(completed.id);
+    expect(
+      selectWorkoutDetailForDisplay(null, before, false, true, 7).workout,
+    ).toBeNull();
+    await markLocalWorkoutDraftCompleted({ ...completed, version: 8 });
+    const restored = await getLocalWorkoutDraft(completed.id);
+    expect(
+      selectWorkoutDetailForDisplay(null, restored, false, true, 7).workout
+        ?.version,
+    ).toBe(8);
+  });
+
   it('未送信の完了済みeditを集約し、delete・restoreをFIFOでversion接続する', async () => {
     const completed = activeWorkout();
     completed.status = 'completed';

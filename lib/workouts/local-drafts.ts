@@ -594,6 +594,7 @@ export function selectWorkoutDetailForDisplay(
   localDraft: LocalWorkoutDraft | null,
   hasPendingMutations = false,
   serverKnownMissing = false,
+  missingServerVersion: number | null = null,
 ): WorkoutRestoreResult {
   if (!localDraft) {
     return serverWorkout
@@ -602,6 +603,9 @@ export function selectWorkoutDetailForDisplay(
   }
   if (
     serverKnownMissing &&
+    // A later acknowledged restore advances version and supersedes the 404.
+    (missingServerVersion === null ||
+      localDraft.workout.version <= missingServerVersion) &&
     localDraft.draftStatus === 'completed' &&
     !hasPendingMutations
   ) {

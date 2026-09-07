@@ -65,6 +65,7 @@ export function WorkoutDetail({ id }: { id: string }) {
   const [startingCopy, setStartingCopy] = useState(false);
   const startingCopyRef = useRef(false);
   const serverKnownMissingRef = useRef(false);
+  const missingServerVersionRef = useRef<number | null>(null);
 
   const refreshSyncState = useCallback(async () => {
     const queue = await getWorkoutQueueState(id);
@@ -87,6 +88,7 @@ export function WorkoutDetail({ id }: { id: string }) {
         local,
         queued.length > 0,
         serverKnownMissingRef.current,
+        missingServerVersionRef.current,
       );
       setWorkout(selected.workout);
     }
@@ -110,6 +112,7 @@ export function WorkoutDetail({ id }: { id: string }) {
   useEffect(() => {
     let active = true;
     serverKnownMissingRef.current = false;
+    missingServerVersionRef.current = null;
     void Promise.allSettled([
       getWorkout(id),
       getLocalWorkoutDraft(id),
@@ -127,6 +130,7 @@ export function WorkoutDetail({ id }: { id: string }) {
         serverResult.reason instanceof WorkoutApiError &&
         serverResult.reason.status === 404;
       serverKnownMissingRef.current = serverKnownMissing;
+      missingServerVersionRef.current = local?.workout.version ?? null;
       const selected = selectWorkoutDetailForDisplay(
         server,
         local,

@@ -64,6 +64,7 @@ export function WorkoutDetail({ id }: { id: string }) {
   );
   const [startingCopy, setStartingCopy] = useState(false);
   const startingCopyRef = useRef(false);
+  const serverKnownMissingRef = useRef(false);
 
   const refreshSyncState = useCallback(async () => {
     const queue = await getWorkoutQueueState(id);
@@ -79,7 +80,16 @@ export function WorkoutDetail({ id }: { id: string }) {
 
   const refreshLocalWorkout = useCallback(async () => {
     const local = await getLocalWorkoutDraft(id).catch(() => null);
-    if (local) setWorkout(local.workout);
+    const queued = await listWorkoutMutations(id).catch(() => []);
+    if (local) {
+      const selected = selectWorkoutDetailForDisplay(
+        null,
+        local,
+        queued.length > 0,
+        serverKnownMissingRef.current,
+      );
+      setWorkout(selected.workout);
+    }
     return local;
   }, [id]);
 
@@ -99,6 +109,7 @@ export function WorkoutDetail({ id }: { id: string }) {
 
   useEffect(() => {
     let active = true;
+    serverKnownMissingRef.current = false;
     void Promise.allSettled([
       getWorkout(id),
       getLocalWorkoutDraft(id),
@@ -115,6 +126,7 @@ export function WorkoutDetail({ id }: { id: string }) {
         serverResult.status === 'rejected' &&
         serverResult.reason instanceof WorkoutApiError &&
         serverResult.reason.status === 404;
+      serverKnownMissingRef.current = serverKnownMissing;
       const selected = selectWorkoutDetailForDisplay(
         server,
         local,
@@ -127,6 +139,7 @@ export function WorkoutDetail({ id }: { id: string }) {
         setEditing(local?.draftStatus === 'completed_edit');
         setError(null);
       } else {
+        setWorkout(null);
         const cause =
           serverResult.status === 'rejected'
             ? serverResult.reason

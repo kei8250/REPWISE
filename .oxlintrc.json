@@ -23,6 +23,7 @@
     "typeCheck": true
   },
   "ignorePatterns": [
+    "retained-assets/**",
     ".next/**",
     ".vinext/**",
     "out/**",

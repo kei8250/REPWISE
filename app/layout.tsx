@@ -1,12 +1,7 @@
 import type { Metadata } from 'next';
-import { Noto_Sans_JP } from 'next/font/google';
 import { SyncRecovery } from '@/components/workouts/sync-recovery';
+import './fonts/noto-sans-jp/font.css';
 import './globals.css';
-
-const notoSansJP = Noto_Sans_JP({
-  variable: '--font-noto-sans-jp',
-  subsets: ['latin'],
-});
 
 export const metadata: Metadata = {
   title: 'REPWISE — トレーニング記録・AIコーチ',
@@ -41,7 +36,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
-      <body className={`${notoSansJP.variable} antialiased`}>
+      <body className="antialiased">
         <SyncRecovery />
         {children}
       </body>

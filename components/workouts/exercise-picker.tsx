@@ -12,13 +12,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
-  createExerciseMaster,
-  listExerciseMasters,
-} from '@/lib/workouts/api-client';
-import {
-  getExerciseMasterCache,
-  saveExerciseMasterCache,
-} from '@/lib/workouts/local-drafts';
+  createCachedExerciseMaster,
+  loadExerciseMasters,
+} from '@/lib/workouts/exercise-master-cache';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 
 const bodyParts = ['胸', '背中', '脚', '肩', '腕', '体幹', 'その他'];
@@ -50,15 +46,14 @@ export function ExercisePicker({
       if (!alive) return;
       setLoading(true);
       setError(null);
-      const cached = await getExerciseMasterCache().catch(() => []);
-      if (alive && cached.length) setItems(cached);
       try {
-        const loaded = await listExerciseMasters();
+        const loaded = await loadExerciseMasters((cached) => {
+          if (alive) setItems(cached);
+        });
         if (!alive) return;
         setItems(loaded);
-        await saveExerciseMasterCache(loaded).catch(() => undefined);
       } catch (cause) {
-        if (alive && !cached.length) {
+        if (alive) {
           setError(
             cause instanceof Error
               ? cause.message
@@ -97,15 +92,14 @@ export function ExercisePicker({
     setLoading(true);
     setError(null);
     try {
-      const created = await createExerciseMaster({
+      const created = await createCachedExerciseMaster({
         name: newName.trim(),
         bodyPart: newBodyPart,
       });
-      setItems((current) => {
-        const next = [...current, created];
-        void saveExerciseMasterCache(next).catch(() => undefined);
-        return next;
-      });
+      setItems((current) => [
+        ...current.filter((item) => item.id !== created.id),
+        created,
+      ]);
       setNewName('');
       onSelect(created);
       onOpenChange(false);

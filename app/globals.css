@@ -2,6 +2,9 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+/* Archived output is served unchanged, not application class-name source. */
+@source not '../retained-assets';
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -48,7 +51,9 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-body { font-family: var(--font-noto-sans-jp), Arial, Helvetica, sans-serif; }
+body {
+  font-family: var(--font-noto-sans-jp), Arial, Helvetica, sans-serif;
+}
 
 :root {
   --background: oklch(0.979 0.009 148);
@@ -60,7 +65,7 @@ body { font-family: var(--font-noto-sans-jp), Arial, Helvetica, sans-serif; }
   --primary: oklch(0.35 0.073 151);
   --primary-foreground: oklch(0.985 0.012 145);
   --secondary: oklch(0.945 0.025 145);
-  --secondary-foreground: oklch(0.30 0.06 151);
+  --secondary-foreground: oklch(0.3 0.06 151);
   --muted: oklch(0.95 0.014 145);
   --muted-foreground: oklch(0.52 0.028 151);
   --accent: oklch(0.9 0.17 123);
@@ -68,7 +73,7 @@ body { font-family: var(--font-noto-sans-jp), Arial, Helvetica, sans-serif; }
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.89 0.018 145);
   --input: oklch(0.87 0.02 145);
-  --ring: oklch(0.55 0.10 151);
+  --ring: oklch(0.55 0.1 151);
   --chart-1: oklch(0.54 0.14 151);
   --chart-2: oklch(0.76 0.16 126);
   --chart-3: oklch(0.63 0.13 285);

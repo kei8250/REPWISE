@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "vinext build && node scripts/merge-retained-assets.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit",

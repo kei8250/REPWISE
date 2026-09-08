@@ -648,6 +648,18 @@ export async function saveExerciseMasterCache(
 export async function getExerciseMasterCache(
   databaseName = LOCAL_DRAFT_DATABASE_NAME,
 ) {
+  return (await getExerciseMasterCacheRecord(databaseName))?.exercises ?? [];
+}
+
+export interface ExerciseMasterCacheRecord {
+  exercises: ExerciseMaster[];
+  updatedAt: string;
+  revision: number;
+}
+
+export async function getExerciseMasterCacheRecord(
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+): Promise<ExerciseMasterCacheRecord | null> {
   const database = await openDatabase(databaseName);
   const transaction = database.transaction(
     EXERCISE_MASTER_CACHE_STORE_NAME,
@@ -656,11 +668,77 @@ export async function getExerciseMasterCache(
   const complete = transactionComplete(transaction);
   const value = (await requestResult(
     transaction.objectStore(EXERCISE_MASTER_CACHE_STORE_NAME).get('all'),
-  )) as { exercises?: unknown } | undefined;
+  )) as
+    | { exercises?: unknown; updatedAt?: string; revision?: number }
+    | undefined;
   await complete;
   return Array.isArray(value?.exercises)
-    ? (value.exercises as ExerciseMaster[])
-    : [];
+    ? {
+        exercises: value.exercises as ExerciseMaster[],
+        updatedAt: value.updatedAt ?? '',
+        revision: value.revision ?? 0,
+      }
+    : null;
+}
+
+// Only the master-cache store is touched. Workout drafts/queue schema and
+// transactions are unchanged. The revision rejects a GET that started before
+// a successful master creation/change (including from another tab).
+export async function updateExerciseMasterCache(
+  exercises: ExerciseMaster[],
+  expectedRevision: number,
+  startedAt: string,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    EXERCISE_MASTER_CACHE_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(EXERCISE_MASTER_CACHE_STORE_NAME);
+  const current = (await requestResult(store.get('all'))) as
+    | ExerciseMasterCacheRecord
+    | undefined;
+  const accepted =
+    (current?.revision ?? 0) === expectedRevision &&
+    !(Date.parse(current?.updatedAt ?? '') > Date.parse(startedAt));
+  if (accepted)
+    store.put({
+      key: 'all',
+      exercises: structuredClone(exercises),
+      updatedAt: startedAt,
+      revision: expectedRevision,
+    });
+  await complete;
+  return accepted;
+}
+
+export async function invalidateExerciseMasterCacheRecord(
+  changed?: ExerciseMaster,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction(
+    EXERCISE_MASTER_CACHE_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(EXERCISE_MASTER_CACHE_STORE_NAME);
+  const current = (await requestResult(store.get('all'))) as
+    | ExerciseMasterCacheRecord
+    | undefined;
+  const exercises = (current?.exercises ?? []).filter(
+    (item) => item.id !== changed?.id,
+  );
+  if (changed) exercises.push(changed);
+  store.put({
+    key: 'all',
+    exercises,
+    updatedAt: '',
+    revision: (current?.revision ?? 0) + 1,
+  });
+  await complete;
 }
 
 export function selectWorkoutForRestore(

@@ -37,6 +37,38 @@ function workout(): Workout {
   };
 }
 
+function exercise(id: string, position: number): Workout['exercises'][number] {
+  return {
+    id,
+    exerciseId: `master-${id}`,
+    position,
+    status: 'in_progress',
+    exerciseNameSnapshot: `高速入力種目${position + 1}`,
+    note: '',
+    startedAt: timestamp,
+    completedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    sets: [
+      {
+        id: `${id}-set-1`,
+        position: 0,
+        status: 'planned',
+        setType: 'working',
+        targetLoadGrams: null,
+        targetRepMin: null,
+        targetRepMax: null,
+        actualLoadGrams: null,
+        actualReps: null,
+        memo: '',
+        completedAt: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ],
+  };
+}
+
 async function deleteDatabase() {
   await closeLocalDraftDatabase();
   await new Promise<void>((resolve, reject) => {
@@ -106,6 +138,177 @@ describe('Phase 1B-1b retry queue', () => {
     expect(await listWorkoutMutations(local.id)).toEqual([]);
     await syncPendingWorkoutMutations(local.id, { fetcher });
     expect(operations).toEqual(['create', 'create', 'replace']);
+  });
+
+  it('claim中のreplaceを保持し、後続replaceを次versionで続けてdrainする', async () => {
+    const local = workout();
+    await saveWorkoutDraftAndEnqueueMutation(local, 'create');
+    let serverVersion = 0;
+    const initialFetcher = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string')
+          throw new Error('JSON bodyが必要です');
+        const input = JSON.parse(init.body) as WorkoutMutationInput;
+        expect(input.baseVersion).toBe(serverVersion);
+        serverVersion += 1;
+        return Response.json({
+          mutationId: input.mutationId,
+          duplicate: false,
+          workout: { ...input.payload.workout, version: serverVersion },
+        });
+      },
+    );
+    await syncPendingWorkoutMutations(local.id, { fetcher: initialFetcher });
+
+    local.exercises = [exercise('exercise-1', 0)];
+    await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+    let releaseFirstReplace!: () => void;
+    const firstReplaceGate = new Promise<void>((resolve) => {
+      releaseFirstReplace = resolve;
+    });
+    let reportFirstReplaceClaimed!: () => void;
+    const firstReplaceClaimed = new Promise<void>((resolve) => {
+      reportFirstReplaceClaimed = resolve;
+    });
+    const sentBaseVersions: number[] = [];
+    let replaceRequests = 0;
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body !== 'string')
+          throw new Error('JSON bodyが必要です');
+        const input = JSON.parse(init.body) as WorkoutMutationInput;
+        sentBaseVersions.push(input.baseVersion);
+        replaceRequests += 1;
+        if (replaceRequests === 1) {
+          reportFirstReplaceClaimed();
+          await firstReplaceGate;
+        }
+        if (input.baseVersion !== serverVersion) {
+          return Response.json(
+            {
+              error: '別の変更が存在します',
+              code: 'WORKOUT_VERSION_CONFLICT',
+              conflict: {
+                type: 'stale',
+                baseVersion: input.baseVersion,
+                serverVersion,
+                serverUpdatedAt: timestamp,
+              },
+            },
+            { status: 409 },
+          );
+        }
+        serverVersion += 1;
+        return Response.json({
+          mutationId: input.mutationId,
+          duplicate: false,
+          workout: { ...input.payload.workout, version: serverVersion },
+        });
+      },
+    );
+
+    const syncing = syncPendingWorkoutMutations(local.id, { fetcher });
+    await firstReplaceClaimed;
+    expect((await listWorkoutMutations(local.id))[0]).toMatchObject({
+      syncStatus: 'syncing',
+      baseVersion: 1,
+    });
+    local.exercises.push(exercise('exercise-2', 1));
+    await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+    expect(
+      (await listWorkoutMutations(local.id)).map((item) => item.baseVersion),
+    ).toEqual([1, 2]);
+
+    releaseFirstReplace();
+    const result = await syncing;
+    expect(result).toMatchObject({ processed: 2, remaining: 0, failed: null });
+    expect(sentBaseVersions).toEqual([1, 2]);
+    expect(serverVersion).toBe(3);
+  });
+
+  it('高速な種目追加・重量・rep変更を25回繰り返しても競合しない', async () => {
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      await deleteDatabase();
+      const local = workout();
+      local.id = `rapid-workout-${attempt}`;
+      await saveWorkoutDraftAndEnqueueMutation(local, 'create');
+      let serverVersion = 0;
+      let releaseFirstReplace!: () => void;
+      const firstReplaceGate = new Promise<void>((resolve) => {
+        releaseFirstReplace = resolve;
+      });
+      let reportFirstReplaceClaimed!: () => void;
+      const firstReplaceClaimed = new Promise<void>((resolve) => {
+        reportFirstReplaceClaimed = resolve;
+      });
+      let replaceRequests = 0;
+      const sentBaseVersions: number[] = [];
+      const fetcher = vi.fn(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (typeof init?.body !== 'string')
+            throw new Error('JSON bodyが必要です');
+          const input = JSON.parse(init.body) as WorkoutMutationInput;
+          sentBaseVersions.push(input.baseVersion);
+          if (input.operation === 'replace') {
+            replaceRequests += 1;
+            if (replaceRequests === 1) {
+              reportFirstReplaceClaimed();
+              await firstReplaceGate;
+            }
+          }
+          if (input.baseVersion !== serverVersion) {
+            return Response.json(
+              {
+                error: '別の変更が存在します',
+                code: 'WORKOUT_VERSION_CONFLICT',
+                conflict: {
+                  type: 'stale',
+                  baseVersion: input.baseVersion,
+                  serverVersion,
+                  serverUpdatedAt: timestamp,
+                },
+              },
+              { status: 409 },
+            );
+          }
+          serverVersion += 1;
+          return Response.json({
+            mutationId: input.mutationId,
+            duplicate: false,
+            workout: { ...input.payload.workout, version: serverVersion },
+          });
+        },
+      );
+
+      await syncPendingWorkoutMutations(local.id, { fetcher });
+      local.exercises = [exercise(`exercise-${attempt}-1`, 0)];
+      await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+      const syncing = syncPendingWorkoutMutations(local.id, { fetcher });
+      await firstReplaceClaimed;
+
+      local.exercises.push(exercise(`exercise-${attempt}-2`, 1));
+      await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+      local.exercises.push(exercise(`exercise-${attempt}-3`, 2));
+      await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+      local.exercises[0].sets[0].actualLoadGrams = 80_000;
+      local.exercises[0].sets[0].actualReps = 8;
+      local.exercises[0].sets[0].status = 'completed';
+      await saveWorkoutDraftAndEnqueueMutation(local, 'replace');
+
+      releaseFirstReplace();
+      const result = await syncing;
+      expect(result.failed).toBeNull();
+      expect(await listWorkoutMutations(local.id)).toEqual([]);
+      expect(sentBaseVersions).toEqual([0, 1, 2]);
+      expect(serverVersion).toBe(3);
+      const saved = await getLocalWorkoutDraft(local.id);
+      expect(saved?.workout.exercises).toHaveLength(3);
+      expect(saved?.workout.exercises[0].sets[0]).toMatchObject({
+        actualLoadGrams: 80_000,
+        actualReps: 8,
+        status: 'completed',
+      });
+    }
   });
 
   it('同一ミリ秒の連続入力でも先行ackで新しいローカル下書きを巻き戻さない', async () => {

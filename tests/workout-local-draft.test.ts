@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  claimNextWorkoutMutation,
   closeLocalDraftDatabase,
   getLatestActiveWorkoutDraft,
   getLocalWorkoutDraft,
@@ -14,6 +15,7 @@ import {
   saveWorkoutDraftAndEnqueueMutation,
   selectWorkoutDetailForDisplay,
   selectWorkoutForRestore,
+  updateWorkoutMutation,
   WORKOUT_MUTATION_STORE_NAME,
 } from '@/lib/workouts/local-drafts';
 import type {
@@ -271,7 +273,7 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     );
   });
 
-  it('未送信・未試行のreplaceだけを最新スナップショットへ集約する', async () => {
+  it('未claimのpending replaceだけを最新スナップショットへ集約する', async () => {
     const workout = activeWorkout();
     await saveWorkoutDraftAndEnqueueMutation(workout, 'create');
     workout.overallNote = '古い未送信入力';
@@ -283,6 +285,76 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     expect(queue.map((item) => item.operation)).toEqual(['create', 'replace']);
     expect(queue.map((item) => item.baseVersion)).toEqual([0, 1]);
     expect(queue[1].payload.workout.overallNote).toBe('最新の未送信入力');
+  });
+
+  it('claim前に追加されたreplaceは最新snapshotだけを同じbase versionでclaimする', async () => {
+    const workout = activeWorkout();
+    workout.version = 5;
+    await saveActiveWorkoutDraft(workout, {
+      serverUpdatedAt: workout.updatedAt,
+    });
+    workout.overallNote = 'claim前の古い入力';
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+    workout.overallNote = 'claim前の最新入力';
+    const latest = await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+
+    const claim = await claimNextWorkoutMutation(workout.id, {
+      lastAttemptAt: localTime,
+    });
+    expect(claim).toMatchObject({
+      status: 'claimed',
+      mutation: {
+        mutationId: latest.mutation.mutationId,
+        baseVersion: 5,
+        syncStatus: 'syncing',
+        payload: { workout: { overallNote: 'claim前の最新入力' } },
+      },
+    });
+    expect(await listWorkoutMutations(workout.id)).toHaveLength(1);
+  });
+
+  it('claim済み・送信試行済みのreplaceをcoalescingで削除しない', async () => {
+    const workout = activeWorkout();
+    workout.version = 5;
+    await saveActiveWorkoutDraft(workout, {
+      serverUpdatedAt: workout.updatedAt,
+    });
+    workout.overallNote = 'claim対象';
+    const first = await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+
+    const claim = await claimNextWorkoutMutation(workout.id, {
+      lastAttemptAt: localTime,
+    });
+    expect(claim).toMatchObject({
+      status: 'claimed',
+      mutation: {
+        mutationId: first.mutation.mutationId,
+        syncStatus: 'syncing',
+        retryCount: 1,
+        baseVersion: 5,
+      },
+    });
+
+    workout.overallNote = 'claim後の入力';
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+    let queue = await listWorkoutMutations(workout.id);
+    expect(queue.map((item) => item.syncStatus)).toEqual([
+      'syncing',
+      'pending',
+    ]);
+    expect(queue.map((item) => item.baseVersion)).toEqual([5, 6]);
+
+    await updateWorkoutMutation(first.mutation.mutationId, {
+      syncStatus: 'failed',
+      lastError: '一時的な失敗',
+    });
+    workout.overallNote = '再試行前の最新入力';
+    await saveWorkoutDraftAndEnqueueMutation(workout, 'replace');
+    queue = await listWorkoutMutations(workout.id);
+    expect(queue.map((item) => item.syncStatus)).toEqual(['failed', 'pending']);
+    expect(queue.map((item) => item.baseVersion)).toEqual([5, 6]);
+    expect(queue[0].mutationId).toBe(first.mutation.mutationId);
+    expect(queue[1].payload.workout.overallNote).toBe('再試行前の最新入力');
   });
 
   it('認識済みserver versionとFIFO上の先行mutationからbase versionを決める', async () => {

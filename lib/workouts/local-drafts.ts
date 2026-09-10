@@ -37,6 +37,11 @@ export type WorkoutRestoreResult = {
   source: 'local' | 'server' | 'none';
 };
 
+export type WorkoutMutationClaim =
+  | { status: 'claimed'; mutation: WorkoutMutation }
+  | { status: 'stopped'; mutation: WorkoutMutation }
+  | { status: 'empty'; mutation: null };
+
 const databases = new Map<string, Promise<IDBDatabase>>();
 let lastMutationSequence = 0;
 
@@ -396,6 +401,46 @@ export async function listWorkoutMutations(
   return values
     .filter(isWorkoutMutation)
     .sort((a, b) => a.sequence - b.sequence);
+}
+
+export async function claimNextWorkoutMutation(
+  workoutId: string,
+  options: { databaseName?: string; lastAttemptAt?: string } = {},
+): Promise<WorkoutMutationClaim> {
+  const database = await openDatabase(options.databaseName);
+  const transaction = database.transaction(
+    WORKOUT_MUTATION_STORE_NAME,
+    'readwrite',
+  );
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const values = await requestResult(
+    store.index('workoutId').getAll(workoutId),
+  );
+  const mutation = values
+    .filter(isWorkoutMutation)
+    .sort((a, b) => a.sequence - b.sequence)[0];
+
+  if (!mutation) {
+    await complete;
+    return { status: 'empty', mutation: null };
+  }
+  if (mutation.syncStatus === 'conflict' || mutation.syncStatus === 'blocked') {
+    await complete;
+    return { status: 'stopped', mutation };
+  }
+
+  const claimed: WorkoutMutation = {
+    ...mutation,
+    syncStatus: 'syncing',
+    retryCount: mutation.retryCount + 1,
+    lastAttemptAt: options.lastAttemptAt ?? new Date().toISOString(),
+    lastError: null,
+  };
+  store.put(claimed);
+  await complete;
+  notifyQueueChanged();
+  return { status: 'claimed', mutation: claimed };
 }
 
 export async function updateWorkoutMutation(

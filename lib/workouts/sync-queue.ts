@@ -1,6 +1,7 @@
 import { syncWorkoutMutation, WorkoutApiError } from './api-client';
 import {
   acknowledgeWorkoutMutation,
+  claimNextWorkoutMutation,
   listWorkoutMutations,
   resetBlockedWorkoutMutations,
   updateWorkoutMutation,
@@ -145,29 +146,20 @@ async function runSync(
     await resetBlockedWorkoutMutations(workoutId, options.databaseName);
   }
 
-  const mutations = await listWorkoutMutations(workoutId, options.databaseName);
   let processed = 0;
   let failed: WorkoutMutation | null = null;
-  for (const mutation of mutations) {
-    if (mutation.syncStatus === 'conflict') {
-      failed = mutation;
-      break;
-    }
-    if (mutation.syncStatus === 'blocked' && !options.manual) {
-      failed = mutation;
-      break;
-    }
+  while (true) {
     const lastAttemptAt = new Date().toISOString();
-    await updateWorkoutMutation(
-      mutation.mutationId,
-      {
-        syncStatus: 'syncing',
-        retryCount: mutation.retryCount + 1,
-        lastAttemptAt,
-        lastError: null,
-      },
-      options.databaseName,
-    );
+    const claim = await claimNextWorkoutMutation(workoutId, {
+      databaseName: options.databaseName,
+      lastAttemptAt,
+    });
+    if (claim.status === 'empty') break;
+    if (claim.status === 'stopped') {
+      failed = claim.mutation;
+      break;
+    }
+    const mutation = claim.mutation;
     try {
       const result = await syncWorkoutMutation(
         mutationForTransport(mutation),
@@ -196,7 +188,6 @@ async function runSync(
             : 'failed';
       failed = {
         ...mutation,
-        retryCount: mutation.retryCount + 1,
         syncStatus,
         lastAttemptAt,
         lastError: message,
@@ -205,7 +196,7 @@ async function runSync(
         mutation.mutationId,
         {
           syncStatus,
-          retryCount: failed.retryCount,
+          retryCount: mutation.retryCount,
           lastAttemptAt,
           lastError: message,
         },

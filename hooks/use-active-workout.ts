@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWorkout } from '@/lib/workouts/api-client';
 import {
+  isUsableActiveWorkoutDraft,
+  loadActiveWorkoutSourcesLocalFirst,
+  shouldAdoptServerWorkout,
+  shouldUpgradeLocalDraftToQueue,
+} from '@/lib/workouts/active-workout-loader';
+import {
   getLocalWorkoutDraft,
   listWorkoutMutations,
   saveActiveWorkoutDraft,
@@ -34,6 +40,7 @@ export function useActiveWorkout(id: string) {
   const workoutRef = useRef<Workout | null>(null);
   const localRevisionRef = useRef(0);
   const serverUpdatedAtRef = useRef<string | null>(null);
+  const serverVersionRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
 
@@ -125,27 +132,73 @@ export function useActiveWorkout(id: string) {
   useEffect(() => {
     mountedRef.current = true;
     let alive = true;
-    void Promise.allSettled([
-      getWorkout(id),
-      getLocalWorkoutDraft(id),
-      listWorkoutMutations(id),
-    ]).then(async ([serverResult, localResult, queueResult]) => {
+    const initializationRevision = localRevisionRef.current;
+    let localWasDisplayed = false;
+    void loadActiveWorkoutSourcesLocalFirst({
+      workoutId: id,
+      loadServer: () => getWorkout(id),
+      loadLocal: () => getLocalWorkoutDraft(id),
+      loadQueue: () => listWorkoutMutations(id),
+      onLocalReady: (draft) => {
+        if (!alive) return;
+        localWasDisplayed = true;
+        workoutRef.current = draft.workout;
+        serverUpdatedAtRef.current = draft.serverUpdatedAt;
+        serverVersionRef.current = Math.max(
+          draft.workout.version,
+          draft.serverVersion ?? 0,
+        );
+        setWorkoutState(draft.workout);
+        setLocalSaveState('saved');
+        setLocalError(null);
+        setError(null);
+        setSaveState(isBrowserOffline() ? 'pending' : 'saving');
+      },
+      onQueueReady: (queue) => {
+        if (!alive || !localWasDisplayed) return;
+        if (queue.length > 0) void refreshSyncState();
+        else if (isBrowserOffline()) setSaveState('pending');
+      },
+    }).then(async (initial) => {
+      if (!alive) return;
+
+      // The user can edit while the server request is in flight. Re-read both
+      // local stores so reconciliation never reasons from the mount-time copy.
+      const [latestLocalResult, latestQueueResult] = await Promise.allSettled([
+        getLocalWorkoutDraft(id),
+        listWorkoutMutations(id),
+      ]);
       if (!alive) return;
       const serverWorkout =
-        serverResult.status === 'fulfilled' ? serverResult.value : null;
+        initial.server.status === 'fulfilled' ? initial.server.value : null;
       const localDraft =
-        localResult.status === 'fulfilled' ? localResult.value : null;
+        latestLocalResult.status === 'fulfilled'
+          ? latestLocalResult.value
+          : initial.local.status === 'fulfilled'
+            ? initial.local.value
+            : null;
       const queued =
-        queueResult.status === 'fulfilled' ? queueResult.value : [];
+        latestQueueResult.status === 'fulfilled'
+          ? latestQueueResult.value
+          : initial.queue.status === 'fulfilled'
+            ? initial.queue.value
+            : [];
       const restored = selectWorkoutForRestore(
         serverWorkout,
         localDraft,
         queued.length > 0,
       );
       if (!restored.workout) {
+        if (localWasDisplayed && isUsableActiveWorkoutDraft(localDraft, id)) {
+          // Network failure must not turn a usable local workout into a full
+          // page error. The draft stays editable until verification recovers.
+          setSaveState('pending');
+          setError(null);
+          return;
+        }
         const cause =
-          serverResult.status === 'rejected'
-            ? serverResult.reason
+          initial.server.status === 'rejected'
+            ? initial.server.reason
             : new Error('ワークアウトを読み込めませんでした');
         setError(
           cause instanceof Error ? cause.message : '読み込みに失敗しました',
@@ -156,29 +209,81 @@ export function useActiveWorkout(id: string) {
       }
 
       const loaded = restored.workout;
-      workoutRef.current = loaded;
-      serverUpdatedAtRef.current = serverWorkout?.updatedAt ?? null;
-      setWorkoutState(loaded);
+      if (!serverWorkout && !localWasDisplayed) {
+        serverUpdatedAtRef.current = localDraft?.serverUpdatedAt ?? null;
+        serverVersionRef.current = Math.max(
+          loaded.version,
+          localDraft?.serverVersion ?? 0,
+        );
+      }
+      const adoptServer =
+        restored.source === 'server' &&
+        shouldAdoptServerWorkout({
+          serverWorkout: loaded,
+          currentWorkout: workoutRef.current,
+          localDraft,
+          localWasDisplayed,
+          queuedMutationCount: queued.length,
+          initializationRevision,
+          currentRevision: localRevisionRef.current,
+        });
+      const canRecognizeServerRevision =
+        !!serverWorkout &&
+        (!localWasDisplayed ||
+          (queued.length === 0 &&
+            localRevisionRef.current === initializationRevision));
+      if (
+        canRecognizeServerRevision &&
+        serverWorkout.version >= serverVersionRef.current
+      ) {
+        serverUpdatedAtRef.current = serverWorkout.updatedAt;
+        serverVersionRef.current = serverWorkout.version;
+      }
+      if (!localWasDisplayed || adoptServer) {
+        const recognizedVersion = Math.max(
+          loaded.version,
+          serverVersionRef.current,
+        );
+        const adopted =
+          loaded.version === recognizedVersion
+            ? loaded
+            : { ...loaded, version: recognizedVersion };
+        workoutRef.current = adopted;
+        setWorkoutState(adopted);
+      }
       setLocalSaveState('saved');
       setLocalError(null);
 
       if (
         restored.source === 'local' &&
         loaded.status === 'active' &&
-        queued.length === 0
+        shouldUpgradeLocalDraftToQueue(localDraft, queued.length)
       ) {
         // Upgrade a Phase 1B-1a-only draft into the durable retry pipeline.
-        await saveWorkoutDraftAndEnqueueMutation(loaded, 'replace', {
+        const current = workoutRef.current ?? loaded;
+        await saveWorkoutDraftAndEnqueueMutation(current, 'replace', {
           localUpdatedAt: localDraft?.localUpdatedAt ?? loaded.updatedAt,
           serverUpdatedAt: serverWorkout?.updatedAt ?? null,
         });
-      } else if (restored.source === 'server' && loaded.status === 'active') {
-        await saveActiveWorkoutDraft(loaded, {
-          localUpdatedAt: loaded.updatedAt,
-          serverUpdatedAt: loaded.updatedAt,
+      } else if (
+        restored.source === 'server' &&
+        adoptServer &&
+        loaded.status === 'active'
+      ) {
+        const current = workoutRef.current ?? loaded;
+        await saveActiveWorkoutDraft(current, {
+          localUpdatedAt: current.updatedAt,
+          serverUpdatedAt: serverWorkout?.updatedAt ?? current.updatedAt,
         });
       }
-      await refreshSyncState();
+      const queueState = await refreshSyncState();
+      if (
+        initial.server.status === 'rejected' &&
+        localWasDisplayed &&
+        queueState.total === 0
+      ) {
+        setSaveState('pending');
+      }
       scheduleSync();
     });
     return () => {
@@ -209,8 +314,12 @@ export function useActiveWorkout(id: string) {
     const flushLatestLocalSnapshot = () => {
       const snapshot = workoutRef.current;
       if (!snapshot || snapshot.status !== 'active') return;
-      void saveActiveWorkoutDraft(snapshot, {
-        localUpdatedAt: snapshot.updatedAt,
+      const versionSafeSnapshot =
+        snapshot.version >= serverVersionRef.current
+          ? snapshot
+          : { ...snapshot, version: serverVersionRef.current };
+      void saveActiveWorkoutDraft(versionSafeSnapshot, {
+        localUpdatedAt: versionSafeSnapshot.updatedAt,
         serverUpdatedAt: serverUpdatedAtRef.current,
       }).catch(() => undefined);
     };

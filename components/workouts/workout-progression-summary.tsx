@@ -1,6 +1,7 @@
 'use client';
 
 import { CircleHelp, LoaderCircle, Minus, TrendingUp } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useWorkoutCompletionProgression } from '@/hooks/use-workout-completion-progression';
@@ -10,6 +11,11 @@ import {
   progressionReasonLabel,
   progressionStatusLabel,
 } from '@/lib/progression/completion-summary';
+import {
+  achievedPersonalRecordLabels,
+  formatE1rmKg,
+  formatVolumeKg,
+} from '@/lib/progression/personal-records';
 
 export function WorkoutProgressionSummary({
   workoutId,
@@ -59,6 +65,9 @@ export function WorkoutProgressionSummary({
                 const nextTarget = formatNextProgressionTarget(
                   exercise.decision,
                 );
+                const personalRecordLabels = achievedPersonalRecordLabels(
+                  exercise.personalRecords,
+                );
                 const Icon =
                   exercise.decision.status === 'increase_load'
                     ? TrendingUp
@@ -81,12 +90,52 @@ export function WorkoutProgressionSummary({
                         <p className="mt-1 text-sm font-bold">
                           {formatWorkingSetPerformance(exercise.performance)}
                         </p>
+                        {(exercise.personalRecords.current.maxE1rmGrams !==
+                          null ||
+                          exercise.personalRecords.current
+                            .totalVolumeGramReps !== null) && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {exercise.personalRecords.current.maxE1rmGrams !==
+                              null && (
+                              <>
+                                e1RM{' '}
+                                {formatE1rmKg(
+                                  exercise.personalRecords.current.maxE1rmGrams,
+                                )}
+                              </>
+                            )}
+                            {exercise.personalRecords.current.maxE1rmGrams !==
+                              null &&
+                              exercise.personalRecords.current
+                                .totalVolumeGramReps !== null &&
+                              ' · '}
+                            {exercise.personalRecords.current
+                              .totalVolumeGramReps !== null && (
+                              <>
+                                ボリューム{' '}
+                                {formatVolumeKg(
+                                  exercise.personalRecords.current
+                                    .totalVolumeGramReps,
+                                )}
+                              </>
+                            )}
+                          </p>
+                        )}
                         <p className="mt-2 text-sm font-black">
                           {progressionStatusLabel(exercise.decision.status)}
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {progressionReasonLabel(exercise.decision.reasonCode)}
                         </p>
+                        {exercise.personalRecords.status === 'first_record' ? (
+                          <Badge variant="secondary" className="mt-2">
+                            初回記録
+                          </Badge>
+                        ) : personalRecordLabels.length > 0 ? (
+                          <p className="mt-2 inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-950">
+                            PR: {personalRecordLabels.join(' / ')}
+                          </p>
+                        ) : null}
                         {nextTarget && (
                           <p className="mt-2 text-xs font-bold text-primary">
                             次回候補 {nextTarget}

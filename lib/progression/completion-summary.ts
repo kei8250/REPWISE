@@ -4,6 +4,7 @@ import type {
   ProgressionProfile,
   ProgressionReasonCode,
 } from './engine';
+import type { PersonalRecordEvaluation } from './personal-records';
 
 export interface WorkoutCompletionProgressionExercise {
   workoutExerciseId: string;
@@ -13,6 +14,7 @@ export interface WorkoutCompletionProgressionExercise {
   profile: ProgressionProfile | null;
   performance: ProgressionExercisePerformance;
   decision: ProgressionDecision;
+  personalRecords: PersonalRecordEvaluation;
 }
 
 export interface WorkoutCompletionProgressionSummary {

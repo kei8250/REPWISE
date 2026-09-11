@@ -102,6 +102,72 @@ function insertCompletedWorkout(
   });
 }
 
+function insertPreviousWorkout(
+  sqlite: DatabaseSync,
+  options: {
+    loadGrams: number;
+    reps: number[];
+    deletedAt?: string | null;
+    id?: string;
+  },
+) {
+  const id = options.id ?? 'previous-workout';
+  const workoutExerciseId = `${id}-exercise`;
+  sqlite
+    .prepare(
+      `INSERT INTO workout
+        (id, owner_id, name, status, local_date, timezone, started_at,
+         ended_at, overall_note, version, created_at, updated_at, deleted_at)
+       VALUES (?, 'default', 'Previous', 'completed', '2026-09-10',
+               'Asia/Tokyo', ?, ?, '', 1, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      '2026-09-10T09:00:00.000Z',
+      '2026-09-10T10:00:00.000Z',
+      '2026-09-10T09:00:00.000Z',
+      '2026-09-10T10:00:00.000Z',
+      options.deletedAt ?? null,
+    );
+  sqlite
+    .prepare(
+      `INSERT INTO workout_exercise
+        (id, workout_id, exercise_id, position, status,
+         exercise_name_snapshot, note, started_at, completed_at,
+         created_at, updated_at)
+       VALUES (?, ?, 'ex-bench-press', 0, 'completed', 'ベンチプレス', '',
+               ?, ?, ?, ?)`,
+    )
+    .run(
+      workoutExerciseId,
+      id,
+      '2026-09-10T09:00:00.000Z',
+      '2026-09-10T10:00:00.000Z',
+      '2026-09-10T09:00:00.000Z',
+      '2026-09-10T10:00:00.000Z',
+    );
+  options.reps.forEach((reps, position) => {
+    sqlite
+      .prepare(
+        `INSERT INTO workout_set
+          (id, workout_exercise_id, position, status, set_type,
+           actual_load_grams, actual_reps, memo, completed_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, 'completed', 'working', ?, ?, '', ?, ?, ?)`,
+      )
+      .run(
+        `${workoutExerciseId}-set-${position}`,
+        workoutExerciseId,
+        position,
+        options.loadGrams,
+        reps,
+        '2026-09-10T10:00:00.000Z',
+        '2026-09-10T09:00:00.000Z',
+        '2026-09-10T10:00:00.000Z',
+      );
+  });
+}
+
 let sqlite: DatabaseSync;
 let db: D1Database;
 
@@ -252,6 +318,100 @@ describe('Phase 3C-1 completion progression summary', () => {
     expect(formatWorkingSetPerformance(exercise.performance)).toBe(
       '100kg×10 / 102.5kg×10 / 100kg×10',
     );
+  });
+
+  it('未完了exerciseはPR対象外にする', async () => {
+    insertCompletedWorkout(sqlite, { reps: [10, 10, 10] });
+    sqlite
+      .prepare(
+        "UPDATE workout_exercise SET status = 'in_progress' WHERE id = 'summary-exercise'",
+      )
+      .run();
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.status,
+    ).toBe('insufficient_data');
+  });
+});
+
+describe('Phase 3C-2 history-derived PR summary', () => {
+  it('I: 過去履歴編集後はPRを現在履歴から再評価する', async () => {
+    insertPreviousWorkout(sqlite, { loadGrams: 100_000, reps: [8, 8, 8] });
+    insertCompletedWorkout(sqlite, {
+      reps: [8, 8, 8],
+      loads: [102_500, 102_500, 102_500],
+    });
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.achieved.weight,
+    ).toBe(true);
+
+    sqlite
+      .prepare(
+        `UPDATE workout_set SET actual_load_grams = 110000
+         WHERE workout_exercise_id = 'previous-workout-exercise'`,
+      )
+      .run();
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.achieved.weight,
+    ).toBe(false);
+  });
+
+  it('J: 過去最高をsoft deleteすると次点記録を比較基準にする', async () => {
+    insertPreviousWorkout(sqlite, {
+      id: 'previous-high',
+      loadGrams: 110_000,
+      reps: [8, 8, 8],
+    });
+    insertPreviousWorkout(sqlite, {
+      id: 'previous-low',
+      loadGrams: 100_000,
+      reps: [8, 8, 8],
+    });
+    insertCompletedWorkout(sqlite, {
+      reps: [8, 8, 8],
+      loads: [105_000, 105_000, 105_000],
+    });
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.achieved.weight,
+    ).toBe(false);
+
+    sqlite
+      .prepare("UPDATE workout SET deleted_at = ? WHERE id = 'previous-high'")
+      .run(timestamp);
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.achieved.weight,
+    ).toBe(true);
+  });
+
+  it('K: restoreした過去最高を再びPR比較対象へ含める', async () => {
+    insertPreviousWorkout(sqlite, {
+      id: 'previous-high',
+      loadGrams: 110_000,
+      reps: [8, 8, 8],
+      deletedAt: timestamp,
+    });
+    insertCompletedWorkout(sqlite, {
+      reps: [8, 8, 8],
+      loads: [105_000, 105_000, 105_000],
+    });
+    expect(
+      (await getServerSummary(db, 'summary-workout')).exercises[0]
+        .personalRecords.status,
+    ).toBe('first_record');
+
+    sqlite
+      .prepare(
+        "UPDATE workout SET deleted_at = NULL WHERE id = 'previous-high'",
+      )
+      .run();
+    const restored = (await getServerSummary(db, 'summary-workout'))
+      .exercises[0].personalRecords;
+    expect(restored.status).toBe('evaluated');
+    expect(restored.achieved.weight).toBe(false);
   });
 });
 

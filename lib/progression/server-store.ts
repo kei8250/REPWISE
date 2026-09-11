@@ -12,6 +12,10 @@ import type {
   WorkoutCompletionProgressionExercise,
   WorkoutCompletionProgressionSummary,
 } from './completion-summary';
+import {
+  evaluatePersonalRecords,
+  type PersonalRecordPerformance,
+} from './personal-records';
 
 const ownerId = 'default';
 
@@ -54,6 +58,8 @@ type CompletionWorkoutRow = {
   id: string;
   version: number;
   local_date: string;
+  started_at: string;
+  ended_at: string | null;
   updated_at: string;
   status: string;
   deleted_at: string | null;
@@ -68,6 +74,11 @@ type CompletionExerciseRow = ExerciseMasterRow & {
 
 type CompletionSetRow = PerformanceSetRow & {
   workout_exercise_id: string;
+};
+
+type PersonalRecordHistoryRow = PerformanceSetRow & {
+  workout_id: string;
+  exercise_id: string;
 };
 
 async function getExerciseMaster(
@@ -196,7 +207,8 @@ export async function getWorkoutCompletionProgressionSummary(
 ): Promise<WorkoutCompletionProgressionSummary> {
   const workout = await db
     .prepare(
-      `SELECT id, version, local_date, updated_at, status, deleted_at
+      `SELECT id, version, local_date, started_at, ended_at, updated_at,
+              status, deleted_at
        FROM workout
        WHERE id = ? AND owner_id = ? AND status = 'completed'
          AND deleted_at IS NULL`,
@@ -252,6 +264,97 @@ export async function getWorkoutCompletionProgressionSummary(
     setsByExercise.set(set.workout_exercise_id, sets);
   }
 
+  const exerciseIds = [
+    ...new Set(exerciseResult.results.map((row) => row.exercise_id)),
+  ];
+  const historyRows: PersonalRecordHistoryRow[] = [];
+  if (exerciseIds.length > 0) {
+    const placeholders = exerciseIds.map(() => '?').join(', ');
+    const currentCompletedAt =
+      workout.ended_at ?? workout.updated_at ?? workout.started_at;
+    const historyResult = await db
+      .prepare(
+        `SELECT w.id AS workout_id, we.exercise_id, ws.id, ws.position,
+                ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps,
+                ws.deleted_at
+         FROM workout_set ws
+         JOIN workout_exercise we ON we.id = ws.workout_exercise_id
+         JOIN workout w ON w.id = we.workout_id
+         WHERE w.owner_id = ?
+           AND w.status = 'completed' AND w.deleted_at IS NULL
+           AND we.status = 'completed'
+           AND ws.status = 'completed' AND ws.set_type = 'working'
+           AND ws.deleted_at IS NULL
+           AND ws.actual_load_grams > 0 AND ws.actual_reps > 0
+           AND we.exercise_id IN (${placeholders})
+           AND w.id <> ?
+           AND (
+             w.local_date < ?
+             OR (
+               w.local_date = ?
+               AND COALESCE(w.ended_at, w.updated_at, w.started_at) < ?
+             )
+             OR (
+               w.local_date = ?
+               AND COALESCE(w.ended_at, w.updated_at, w.started_at) = ?
+               AND w.id < ?
+             )
+           )
+         ORDER BY w.local_date, w.ended_at, w.id, we.position, ws.position`,
+      )
+      .bind(
+        ownerId,
+        ...exerciseIds,
+        workout.id,
+        workout.local_date,
+        workout.local_date,
+        currentCompletedAt,
+        workout.local_date,
+        currentCompletedAt,
+        workout.id,
+      )
+      .all<PersonalRecordHistoryRow>();
+    historyRows.push(...historyResult.results);
+  }
+
+  const historyByExercise = new Map<string, PersonalRecordPerformance[]>();
+  for (const row of historyRows) {
+    const performances = historyByExercise.get(row.exercise_id) ?? [];
+    let performance = performances.find(
+      (candidate) => candidate.workoutId === row.workout_id,
+    );
+    if (!performance) {
+      performance = {
+        workoutId: row.workout_id,
+        exerciseId: row.exercise_id,
+        sets: [],
+      };
+      performances.push(performance);
+    }
+    performance.sets.push({
+      id: row.id,
+      position: Number(row.position),
+      status: row.status,
+      setType: row.set_type,
+      actualLoadGrams:
+        row.actual_load_grams === null ? null : Number(row.actual_load_grams),
+      actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      deletedAt: row.deleted_at,
+    });
+    historyByExercise.set(row.exercise_id, performances);
+  }
+
+  const currentRecordSetsByExercise = new Map<
+    string,
+    ProgressionPerformanceSet[]
+  >();
+  for (const row of exerciseResult.results) {
+    if (row.exercise_status !== 'completed') continue;
+    const sets = currentRecordSetsByExercise.get(row.exercise_id) ?? [];
+    sets.push(...(setsByExercise.get(row.workout_exercise_id) ?? []));
+    currentRecordSetsByExercise.set(row.exercise_id, sets);
+  }
+
   const exercises: WorkoutCompletionProgressionExercise[] =
     exerciseResult.results.map((row) => {
       const master: ExerciseMaster = {
@@ -290,6 +393,14 @@ export async function getWorkoutCompletionProgressionSummary(
         sets: setsByExercise.get(row.workout_exercise_id) ?? [],
       };
       const profile = resolveProgressionProfile(master);
+      const personalRecords = evaluatePersonalRecords(
+        {
+          workoutId: workout.id,
+          exerciseId: row.exercise_id,
+          sets: currentRecordSetsByExercise.get(row.exercise_id) ?? [],
+        },
+        historyByExercise.get(row.exercise_id) ?? [],
+      );
       return {
         workoutExerciseId: row.workout_exercise_id,
         exerciseId: row.exercise_id,
@@ -298,6 +409,7 @@ export async function getWorkoutCompletionProgressionSummary(
         profile,
         performance,
         decision: evaluateProgression(performance, profile),
+        personalRecords,
       };
     });
 

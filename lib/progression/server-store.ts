@@ -14,6 +14,7 @@ const ownerId = 'default';
 type LatestExerciseRow = {
   workout_id: string;
   workout_version: number;
+  workout_local_date: string;
   workout_updated_at: string;
   workout_status: string;
   workout_deleted_at: string | null;
@@ -92,6 +93,7 @@ export async function getLatestCompletedExercisePerformance(
   const exercise = await db
     .prepare(
       `SELECT w.id AS workout_id, w.version AS workout_version,
+              w.local_date AS workout_local_date,
               w.updated_at AS workout_updated_at, w.status AS workout_status,
               w.deleted_at AS workout_deleted_at,
               we.id AS workout_exercise_id, we.exercise_id,
@@ -134,6 +136,7 @@ export async function getLatestCompletedExercisePerformance(
   return {
     workoutId: exercise.workout_id,
     workoutVersion: Number(exercise.workout_version),
+    workoutLocalDate: exercise.workout_local_date,
     workoutUpdatedAt: exercise.workout_updated_at,
     workoutStatus: exercise.workout_status,
     workoutDeletedAt: exercise.workout_deleted_at,

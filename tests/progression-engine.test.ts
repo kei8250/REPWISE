@@ -42,6 +42,7 @@ function performance(
   return {
     workoutId: 'workout-1',
     workoutVersion: 4,
+    workoutLocalDate: '2026-09-10',
     workoutUpdatedAt: '2026-09-11T09:00:00.000Z',
     workoutStatus: 'completed',
     workoutDeletedAt: null,

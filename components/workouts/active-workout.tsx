@@ -21,6 +21,7 @@ import type {
   WorkoutExercise as WorkoutExerciseType,
 } from '@/lib/workouts/types';
 import { useActiveWorkout } from '@/hooks/use-active-workout';
+import { useExerciseProgression } from '@/hooks/use-exercise-progression';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { ExercisePicker } from './exercise-picker';
 import { ReviewConflictControl } from './review-conflict-control';
@@ -45,6 +46,17 @@ export function ActiveWorkout({ id }: { id: string }) {
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
 
+  const effectiveSelectedId =
+    selectedId &&
+    workout?.exercises.some((exercise) => exercise.id === selectedId)
+      ? selectedId
+      : (workout?.exercises[0]?.id ?? null);
+  const selected =
+    workout?.exercises.find(
+      (exercise) => exercise.id === effectiveSelectedId,
+    ) ?? null;
+  const progression = useExerciseProgression(selected?.exerciseId ?? null);
+
   if (!workout)
     return (
       <div className="grid min-h-screen place-items-center px-6">
@@ -66,14 +78,6 @@ export function ActiveWorkout({ id }: { id: string }) {
       </div>
     );
 
-  const effectiveSelectedId =
-    selectedId &&
-    workout.exercises.some((exercise) => exercise.id === selectedId)
-      ? selectedId
-      : (workout.exercises[0]?.id ?? null);
-  const selected =
-    workout.exercises.find((exercise) => exercise.id === effectiveSelectedId) ??
-    null;
   const updateExercise = (next: WorkoutExerciseType) =>
     setWorkout((current) => ({
       ...current,
@@ -259,6 +263,8 @@ export function ActiveWorkout({ id }: { id: string }) {
         ) : (
           <WorkoutExercise
             exercise={selected}
+            progression={progression.state}
+            onRetryProgression={progression.retry}
             isFirst={selected.position === 0}
             isLast={selected.position === workout.exercises.length - 1}
             onChange={updateExercise}

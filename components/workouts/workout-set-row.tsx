@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { WorkoutSet } from '@/lib/workouts/types';
+import type { SetComparison } from '@/lib/progression/active-workout';
 import { cn } from '@/lib/utils';
 
 function gramsToKg(value: number | null) {
@@ -26,6 +27,7 @@ export function WorkoutSetRow({
   isFirst,
   isLast,
   onMove,
+  comparison,
 }: {
   set: WorkoutSet;
   number: number;
@@ -35,6 +37,7 @@ export function WorkoutSetRow({
   isFirst: boolean;
   isLast: boolean;
   onMove: (direction: -1 | 1) => void;
+  comparison: SetComparison;
 }) {
   const completed = set.status === 'completed';
   const patch = (values: Partial<WorkoutSet>) =>
@@ -165,6 +168,18 @@ export function WorkoutSetRow({
           {completed ? <RotateCcw /> : <Check />}
         </Button>
       </div>
+      {completed && comparison.label && (
+        <p
+          className={cn(
+            'mt-2 text-[11px] font-bold',
+            comparison.status === 'above' && 'text-emerald-700',
+            comparison.status === 'equal' && 'text-muted-foreground',
+            comparison.status === 'below' && 'text-amber-700',
+          )}
+        >
+          {comparison.label}
+        </p>
+      )}
       <details className="mt-3 rounded-xl bg-muted/60 px-3 py-2">
         <summary className="cursor-pointer text-xs font-bold text-muted-foreground">
           目標とセットメモ

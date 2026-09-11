@@ -4,14 +4,22 @@ import { ArrowDown, ArrowUp, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { createSet, normalizePositions } from '@/lib/workouts/draft';
+import {
+  compareWorkingSet,
+  getPreviousWorkingSets,
+} from '@/lib/progression/active-workout';
+import type { ExerciseProgressionLoadState } from '@/hooks/use-exercise-progression';
 import type {
   WorkoutExercise as WorkoutExerciseType,
   WorkoutSet,
 } from '@/lib/workouts/types';
 import { WorkoutSetRow } from './workout-set-row';
+import { ExerciseProgression } from './exercise-progression';
 
 export function WorkoutExercise({
   exercise,
+  progression = { status: 'idle', recommendation: null, error: null },
+  onRetryProgression = () => undefined,
   isFirst,
   isLast,
   onChange,
@@ -19,6 +27,8 @@ export function WorkoutExercise({
   onMove,
 }: {
   exercise: WorkoutExerciseType;
+  progression?: ExerciseProgressionLoadState;
+  onRetryProgression?: () => void;
   isFirst: boolean;
   isLast: boolean;
   onChange: (exercise: WorkoutExerciseType) => void;
@@ -49,6 +59,10 @@ export function WorkoutExercise({
     });
   };
   const completed = exercise.status === 'completed';
+  const previousSets =
+    progression.status === 'success'
+      ? getPreviousWorkingSets(progression.recommendation)
+      : [];
   return (
     <section className="space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -96,6 +110,11 @@ export function WorkoutExercise({
           </Button>
         </div>
       </div>
+      <ExerciseProgression
+        exercise={exercise}
+        state={progression}
+        onRetry={onRetryProgression}
+      />
       <div className="space-y-3">
         {exercise.sets.map((set, index) => (
           <WorkoutSetRow
@@ -108,6 +127,7 @@ export function WorkoutExercise({
             isFirst={index === 0}
             isLast={index === exercise.sets.length - 1}
             onMove={(direction) => moveSet(index, direction)}
+            comparison={compareWorkingSet(set, previousSets[index] ?? null)}
           />
         ))}
       </div>

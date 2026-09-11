@@ -28,6 +28,7 @@ export interface ProgressionPerformanceSet {
 export interface ProgressionExercisePerformance {
   workoutId: string;
   workoutVersion: number;
+  workoutLocalDate: string;
   workoutUpdatedAt: string;
   workoutStatus: string;
   workoutDeletedAt: string | null;

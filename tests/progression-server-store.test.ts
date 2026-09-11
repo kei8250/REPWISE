@@ -182,6 +182,7 @@ describe('Phase 3A progression history', () => {
     expect(performance).toMatchObject({
       workoutId: 'valid-latest',
       workoutVersion: 4,
+      workoutLocalDate: '2026-09-08',
       exerciseId: 'ex-bench-press',
     });
     expect(recommendation).toMatchObject({

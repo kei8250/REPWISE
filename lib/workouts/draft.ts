@@ -5,6 +5,7 @@ import type {
   WorkoutExercise,
   WorkoutSet,
 } from './types';
+import type { ApplicableAcceptedTarget } from '@/lib/progression/accepted-next-target';
 
 export function createLocalWorkout(input: CreateWorkoutInput): Workout {
   const timestamp = input.startedAt ?? new Date().toISOString();
@@ -67,35 +68,42 @@ export function copyWorkoutForToday(
     sourceWorkoutId: source.id,
     exercises: [...source.exercises]
       .sort((a, b) => a.position - b.position)
-      .map((exercise, position) => ({
-        id: idFactory(),
-        exerciseId: exercise.exerciseId,
-        position,
-        status: 'in_progress',
-        exerciseNameSnapshot: exercise.exerciseNameSnapshot,
-        note: exercise.note,
-        startedAt: timestamp,
-        completedAt: null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        sets: [...exercise.sets]
-          .sort((a, b) => a.position - b.position)
-          .map((set, setPosition) => {
+      .map((exercise, position) => {
+        const sourceSets = [...exercise.sets].sort(
+          (a, b) => a.position - b.position,
+        );
+        const setCount = sourceSets.length;
+        return {
+          id: idFactory(),
+          exerciseId: exercise.exerciseId,
+          position,
+          status: 'in_progress',
+          exerciseNameSnapshot: exercise.exerciseNameSnapshot,
+          note: exercise.note,
+          startedAt: timestamp,
+          completedAt: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          sets: Array.from({ length: setCount }, (_, setPosition) => {
+            const set =
+              sourceSets[setPosition] ?? sourceSets[sourceSets.length - 1];
             const hasRepTarget =
-              set.targetRepMin !== null || set.targetRepMax !== null;
+              set && (set.targetRepMin !== null || set.targetRepMax !== null);
             return {
               id: idFactory(),
               position: setPosition,
               status: 'planned',
               setType: 'working',
               targetLoadGrams:
-                set.targetLoadGrams ?? set.actualLoadGrams ?? null,
-              targetRepMin: hasRepTarget
-                ? set.targetRepMin
-                : (set.actualReps ?? null),
-              targetRepMax: hasRepTarget
-                ? set.targetRepMax
-                : (set.actualReps ?? null),
+                set?.targetLoadGrams ?? set?.actualLoadGrams ?? null,
+              targetRepMin:
+                (hasRepTarget
+                  ? set?.targetRepMin
+                  : (set?.actualReps ?? null)) ?? null,
+              targetRepMax:
+                (hasRepTarget
+                  ? set?.targetRepMax
+                  : (set?.actualReps ?? null)) ?? null,
               actualLoadGrams: null,
               actualReps: null,
               memo: '',
@@ -104,7 +112,64 @@ export function copyWorkoutForToday(
               updatedAt: timestamp,
             } satisfies WorkoutSet;
           }),
-      })),
+        } satisfies WorkoutExercise;
+      }),
+  };
+}
+
+export function applyAcceptedTargetsToWorkoutCopy(
+  workout: Workout,
+  targets: readonly ApplicableAcceptedTarget[],
+  idFactory: () => string = () => crypto.randomUUID(),
+): Workout {
+  if (!workout.sourceWorkoutId || targets.length === 0) return workout;
+  const byExercise = new Map(
+    targets
+      .filter((target) => target.sourceWorkoutId === workout.sourceWorkoutId)
+      .map((target) => [target.exerciseId, target]),
+  );
+  if (byExercise.size === 0) return workout;
+  return {
+    ...workout,
+    exercises: workout.exercises.map((exercise) => {
+      const target = byExercise.get(exercise.exerciseId);
+      if (!target) return exercise;
+      const sourceSets = [...exercise.sets].sort(
+        (left, right) => left.position - right.position,
+      );
+      return {
+        ...exercise,
+        sets: Array.from(
+          { length: target.targetWorkingSets },
+          (_, position) => {
+            const source =
+              sourceSets[position] ?? sourceSets[sourceSets.length - 1];
+            return {
+              ...(source ?? {
+                id: idFactory(),
+                status: 'planned' as const,
+                setType: 'working' as const,
+                memo: '',
+                completedAt: null,
+                createdAt: workout.createdAt,
+                updatedAt: workout.updatedAt,
+              }),
+              id: source?.id ?? idFactory(),
+              position,
+              status: 'planned' as const,
+              setType: 'working' as const,
+              targetLoadGrams: target.targetLoadGrams,
+              targetRepMin: target.targetRepMin,
+              targetRepMax: target.targetRepMax,
+              actualLoadGrams: null,
+              actualReps: null,
+              memo: source?.memo ?? '',
+              completedAt: null,
+            };
+          },
+        ),
+      };
+    }),
   };
 }
 

@@ -1,6 +1,13 @@
 'use client';
 
-import { CircleHelp, LoaderCircle, Minus, TrendingUp } from 'lucide-react';
+import { useRef, useState } from 'react';
+import {
+  Check,
+  CircleHelp,
+  LoaderCircle,
+  Minus,
+  TrendingUp,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,6 +23,8 @@ import {
   formatE1rmKg,
   formatVolumeKg,
 } from '@/lib/progression/personal-records';
+import type { AcceptedNextTargetSummary } from '@/lib/progression/accepted-next-target';
+import { acceptWorkoutNextTarget } from '@/lib/workouts/api-client';
 
 export function WorkoutProgressionSummary({
   workoutId,
@@ -29,6 +38,48 @@ export function WorkoutProgressionSummary({
     workoutVersion,
     true,
   );
+  const [acceptedOverrides, setAcceptedOverrides] = useState<
+    Record<string, AcceptedNextTargetSummary>
+  >({});
+  const [acceptingExerciseId, setAcceptingExerciseId] = useState<string | null>(
+    null,
+  );
+  const [acceptErrors, setAcceptErrors] = useState<Record<string, string>>({});
+  const mutationIds = useRef(new Map<string, string>());
+
+  async function acceptTarget(exerciseId: string) {
+    if (state.status !== 'success' || acceptingExerciseId) return;
+    const key = `${state.summary.workoutId}:${state.summary.workoutVersion}:${exerciseId}`;
+    let mutationId = mutationIds.current.get(key);
+    if (!mutationId) {
+      mutationId = crypto.randomUUID();
+      mutationIds.current.set(key, mutationId);
+    }
+    setAcceptingExerciseId(exerciseId);
+    setAcceptErrors((current) => ({ ...current, [exerciseId]: '' }));
+    try {
+      const result = await acceptWorkoutNextTarget({
+        mutationId,
+        exerciseId,
+        sourceWorkoutId: state.summary.workoutId,
+        sourceWorkoutVersion: state.summary.workoutVersion,
+      });
+      setAcceptedOverrides((current) => ({
+        ...current,
+        [exerciseId]: result.target,
+      }));
+    } catch (cause) {
+      setAcceptErrors((current) => ({
+        ...current,
+        [exerciseId]:
+          cause instanceof Error
+            ? cause.message
+            : '次回目標を保存できませんでした',
+      }));
+    } finally {
+      setAcceptingExerciseId(null);
+    }
+  }
 
   return (
     <Card
@@ -74,6 +125,20 @@ export function WorkoutProgressionSummary({
                     : exercise.decision.status === 'keep_load'
                       ? Minus
                       : CircleHelp;
+                const accepted =
+                  acceptedOverrides[exercise.exerciseId] ??
+                  exercise.acceptedNextTarget;
+                const acceptedHere =
+                  accepted?.sourceWorkoutId === state.summary.workoutId;
+                const isAccepted =
+                  acceptedHere &&
+                  accepted?.status === 'accepted' &&
+                  accepted.validity === 'valid' &&
+                  accepted.sourceWorkoutVersion ===
+                    state.summary.workoutVersion;
+                const isApplied =
+                  acceptedHere && accepted?.status === 'applied';
+                const isStale = acceptedHere && accepted?.validity !== 'valid';
                 return (
                   <div
                     key={exercise.workoutExerciseId}
@@ -137,9 +202,56 @@ export function WorkoutProgressionSummary({
                           </p>
                         ) : null}
                         {nextTarget && (
-                          <p className="mt-2 text-xs font-bold text-primary">
-                            次回候補 {nextTarget}
-                          </p>
+                          <div className="mt-2">
+                            <p className="text-xs font-bold text-primary">
+                              次回候補 {nextTarget}
+                            </p>
+                            {isAccepted ? (
+                              <p className="mt-2 inline-flex items-center gap-1 text-xs font-black text-emerald-700">
+                                <Check className="size-3.5" />
+                                次回目標に設定済み
+                              </p>
+                            ) : isApplied ? (
+                              <p className="mt-2 inline-flex items-center gap-1 text-xs font-black text-muted-foreground">
+                                <Check className="size-3.5" />
+                                次回Workoutへ適用済み
+                              </p>
+                            ) : (
+                              <>
+                                {isStale && (
+                                  <p className="mt-2 text-xs font-bold text-amber-700">
+                                    元の記録が変更されたため、次回目標を再確認してください
+                                  </p>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="mt-2 h-8"
+                                  disabled={acceptingExerciseId !== null}
+                                  onClick={() =>
+                                    void acceptTarget(exercise.exerciseId)
+                                  }
+                                >
+                                  {acceptingExerciseId ===
+                                    exercise.exerciseId && (
+                                    <LoaderCircle className="animate-spin" />
+                                  )}
+                                  {isStale
+                                    ? '次回目標を再設定'
+                                    : '次回目標に設定'}
+                                </Button>
+                              </>
+                            )}
+                            {acceptErrors[exercise.exerciseId] && (
+                              <p
+                                role="alert"
+                                className="mt-2 text-xs font-bold text-destructive"
+                              >
+                                {acceptErrors[exercise.exerciseId]}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

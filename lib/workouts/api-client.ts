@@ -10,6 +10,10 @@ import type {
 } from './types';
 import type { ExerciseProgressionRecommendation } from '@/lib/progression/engine';
 import type { WorkoutCompletionProgressionSummary } from '@/lib/progression/completion-summary';
+import type {
+  AcceptNextTargetInput,
+  AcceptNextTargetResult,
+} from '@/lib/progression/accepted-next-target';
 
 export class WorkoutApiError extends Error {
   constructor(
@@ -131,6 +135,17 @@ export function getWorkoutCompletionProgressionSummary(
   return request<WorkoutCompletionProgressionSummary>(
     `/api/v2/workouts/${encodeURIComponent(id)}/progression-summary`,
     {},
+    fetcher,
+  );
+}
+
+export function acceptWorkoutNextTarget(
+  input: AcceptNextTargetInput,
+  fetcher?: FetchLike,
+) {
+  return request<AcceptNextTargetResult>(
+    '/api/v2/accepted-next-targets',
+    { method: 'POST', body: JSON.stringify(input) },
     fetcher,
   );
 }

@@ -16,6 +16,7 @@ import {
   evaluatePersonalRecords,
   type PersonalRecordPerformance,
 } from './personal-records';
+import { getAcceptedTargetsForSummary } from './accepted-next-target-queries';
 
 const ownerId = 'default';
 
@@ -218,7 +219,7 @@ export async function getWorkoutCompletionProgressionSummary(
   if (!workout)
     throw new WorkoutNotFoundError('完了済みワークアウトが見つかりません');
 
-  const [exerciseResult, setResult] = await Promise.all([
+  const [exerciseResult, setResult, acceptedTargets] = await Promise.all([
     db
       .prepare(
         `SELECT we.id AS workout_exercise_id, we.exercise_id, we.position,
@@ -246,6 +247,7 @@ export async function getWorkoutCompletionProgressionSummary(
       )
       .bind(workoutId)
       .all<CompletionSetRow>(),
+    getAcceptedTargetsForSummary(db, workoutId),
   ]);
 
   const setsByExercise = new Map<string, ProgressionPerformanceSet[]>();
@@ -410,6 +412,7 @@ export async function getWorkoutCompletionProgressionSummary(
         performance,
         decision: evaluateProgression(performance, profile),
         personalRecords,
+        acceptedNextTarget: acceptedTargets.get(row.exercise_id) ?? null,
       };
     });
 

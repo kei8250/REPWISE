@@ -42,6 +42,12 @@ describe('v2 SQLite schema persistence', () => {
         'utf8',
       ),
     );
+    db.exec(
+      readFileSync(
+        new URL('../drizzle/0005_neat_molly_hayes.sql', import.meta.url),
+        'utf8',
+      ),
+    );
     const timestamp = '2026-09-01T09:00:00.000Z';
     db.prepare(
       "INSERT INTO workout (id, owner_id, name, status, local_date, timezone, started_at, overall_note, version, created_at, updated_at) VALUES (?, 'default', ?, 'active', ?, 'Asia/Tokyo', ?, '', 1, ?, ?)",
@@ -145,6 +151,13 @@ describe('v2 SQLite schema persistence', () => {
         )
         .get(),
     ).toMatchObject({ name: 'source_workout_id' });
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accepted_next_target'",
+        )
+        .get(),
+    ).toMatchObject({ name: 'accepted_next_target' });
     db.close();
   });
 });

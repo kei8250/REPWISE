@@ -9,6 +9,8 @@ import type {
   WorkoutSummary,
 } from './types';
 import { buildSnapshotReplacementPlan } from './snapshot';
+import { applyAcceptedTargetsToWorkoutCopy } from './draft';
+import { getApplicableAcceptedTargetsForCopy } from '@/lib/progression/accepted-next-target-queries';
 import {
   normalizeExerciseName,
   validateExerciseMasterInput,
@@ -662,6 +664,7 @@ function processedMutationGate(
   fingerprint: string,
   result: WorkoutMutationResult,
   processedAt: string,
+  acceptedTargetSourceVersion?: number,
 ) {
   const commonValues = [
     mutation.mutationId,
@@ -680,6 +683,7 @@ function processedMutationGate(
       ? `AND EXISTS (
            SELECT 1 FROM workout
            WHERE id = ? AND owner_id = ? AND status = 'completed' AND deleted_at IS NULL
+             ${acceptedTargetSourceVersion === undefined ? '' : 'AND version = ?'}
          )`
       : '';
     return db
@@ -695,7 +699,15 @@ function processedMutationGate(
         ...commonValues,
         mutation.entityId,
         ownerId,
-        ...(sourceWorkoutId ? [sourceWorkoutId, ownerId] : []),
+        ...(sourceWorkoutId
+          ? [
+              sourceWorkoutId,
+              ownerId,
+              ...(acceptedTargetSourceVersion === undefined
+                ? []
+                : [acceptedTargetSourceVersion]),
+            ]
+          : []),
       );
   }
   const operationPredicate =
@@ -748,8 +760,19 @@ export async function applyWorkoutMutation(
   const creating = mutation.operation === 'create';
   assertMutationCanApply(mutation, existing);
 
-  const saved = makeServerSnapshot(
+  const applicableTargets =
+    creating && mutation.payload.workout.sourceWorkoutId
+      ? await getApplicableAcceptedTargetsForCopy(
+          db,
+          mutation.payload.workout.sourceWorkoutId,
+        )
+      : [];
+  const incoming = applyAcceptedTargetsToWorkoutCopy(
     mutation.payload.workout,
+    applicableTargets,
+  );
+  const saved = makeServerSnapshot(
+    incoming,
     existing,
     mutation.operation,
     now(),
@@ -764,8 +787,46 @@ export async function applyWorkoutMutation(
     workout: saved,
   };
   const statements = [
-    processedMutationGate(db, mutation, fingerprint, result, saved.updatedAt),
+    processedMutationGate(
+      db,
+      mutation,
+      fingerprint,
+      result,
+      saved.updatedAt,
+      applicableTargets[0]?.sourceWorkoutVersion,
+    ),
     ...snapshotStatements(db, saved, creating, mutation),
+    ...applicableTargets.map((target) =>
+      db
+        .prepare(
+          `UPDATE accepted_next_target
+           SET status = 'applied', applied_workout_id = ?, updated_at = ?
+           WHERE id = ? AND owner_id = ? AND status = 'accepted'
+             AND source_workout_id = ? AND source_workout_version = ?
+             AND EXISTS (
+               SELECT 1 FROM workout source
+               WHERE source.id = accepted_next_target.source_workout_id
+                 AND source.owner_id = ? AND source.status = 'completed'
+                 AND source.deleted_at IS NULL
+                 AND source.version = accepted_next_target.source_workout_version
+             )
+             AND EXISTS (
+               SELECT 1 FROM workout applied
+               WHERE applied.id = ? AND applied.owner_id = ?
+             )`,
+        )
+        .bind(
+          saved.id,
+          saved.updatedAt,
+          target.id,
+          ownerId,
+          target.sourceWorkoutId,
+          target.sourceWorkoutVersion,
+          ownerId,
+          saved.id,
+          ownerId,
+        ),
+    ),
   ];
   let batchResults: D1Result<unknown>[];
   try {

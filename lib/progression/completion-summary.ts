@@ -5,6 +5,7 @@ import type {
   ProgressionReasonCode,
 } from './engine';
 import type { PersonalRecordEvaluation } from './personal-records';
+import type { AcceptedNextTargetSummary } from './accepted-next-target';
 
 export interface WorkoutCompletionProgressionExercise {
   workoutExerciseId: string;
@@ -15,6 +16,7 @@ export interface WorkoutCompletionProgressionExercise {
   performance: ProgressionExercisePerformance;
   decision: ProgressionDecision;
   personalRecords: PersonalRecordEvaluation;
+  acceptedNextTarget: AcceptedNextTargetSummary | null;
 }
 
 export interface WorkoutCompletionProgressionSummary {

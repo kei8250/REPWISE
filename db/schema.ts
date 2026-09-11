@@ -5,6 +5,7 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
 
 export const exercises = sqliteTable(
   'exercises',
@@ -192,5 +193,42 @@ export const processedMutations = sqliteTable(
       table.entityType,
       table.entityId,
     ),
+  ],
+);
+
+export const acceptedNextTargets = sqliteTable(
+  'accepted_next_target',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull().default('default'),
+    mutationId: text('mutation_id').notNull(),
+    exerciseId: text('exercise_id')
+      .notNull()
+      .references(() => exerciseMaster.id, { onDelete: 'restrict' }),
+    sourceWorkoutId: text('source_workout_id')
+      .notNull()
+      .references(() => workouts.id, { onDelete: 'restrict' }),
+    sourceWorkoutVersion: integer('source_workout_version').notNull(),
+    targetLoadGrams: integer('target_load_grams').notNull(),
+    targetRepMin: integer('target_rep_min').notNull(),
+    targetRepMax: integer('target_rep_max').notNull(),
+    targetWorkingSets: integer('target_working_sets').notNull(),
+    status: text('status').notNull().default('accepted'),
+    appliedWorkoutId: text('applied_workout_id').references(() => workouts.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_accepted_next_target_mutation').on(table.mutationId),
+    uniqueIndex('uq_accepted_next_target_current')
+      .on(table.ownerId, table.exerciseId)
+      .where(sql`${table.status} = 'accepted'`),
+    index('idx_accepted_next_target_source').on(
+      table.ownerId,
+      table.sourceWorkoutId,
+    ),
+    index('idx_accepted_next_target_applied').on(table.appliedWorkoutId),
   ],
 );

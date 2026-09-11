@@ -8,6 +8,10 @@ import {
 } from './engine';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 import { WorkoutNotFoundError } from '@/lib/workouts/validation';
+import type {
+  WorkoutCompletionProgressionExercise,
+  WorkoutCompletionProgressionSummary,
+} from './completion-summary';
 
 const ownerId = 'default';
 
@@ -44,6 +48,26 @@ type ExerciseMasterRow = {
   default_working_sets: number | null;
   default_increment_grams: number | null;
   default_rest_seconds: number | null;
+};
+
+type CompletionWorkoutRow = {
+  id: string;
+  version: number;
+  local_date: string;
+  updated_at: string;
+  status: string;
+  deleted_at: string | null;
+};
+
+type CompletionExerciseRow = ExerciseMasterRow & {
+  workout_exercise_id: string;
+  exercise_id: string;
+  position: number;
+  exercise_status: string;
+};
+
+type CompletionSetRow = PerformanceSetRow & {
+  workout_exercise_id: string;
 };
 
 async function getExerciseMaster(
@@ -163,5 +187,135 @@ export async function getExerciseProgressionRecommendation(
     profile,
     performance,
     decision: evaluateProgression(performance, profile),
+  };
+}
+
+export async function getWorkoutCompletionProgressionSummary(
+  db: D1Database,
+  workoutId: string,
+): Promise<WorkoutCompletionProgressionSummary> {
+  const workout = await db
+    .prepare(
+      `SELECT id, version, local_date, updated_at, status, deleted_at
+       FROM workout
+       WHERE id = ? AND owner_id = ? AND status = 'completed'
+         AND deleted_at IS NULL`,
+    )
+    .bind(workoutId, ownerId)
+    .first<CompletionWorkoutRow>();
+  if (!workout)
+    throw new WorkoutNotFoundError('完了済みワークアウトが見つかりません');
+
+  const [exerciseResult, setResult] = await Promise.all([
+    db
+      .prepare(
+        `SELECT we.id AS workout_exercise_id, we.exercise_id, we.position,
+                we.status AS exercise_status,
+                em.id, em.name, em.normalized_name, em.body_part,
+                em.measurement_type, em.default_rep_min, em.default_rep_max,
+                em.default_working_sets, em.default_increment_grams,
+                em.default_rest_seconds
+         FROM workout_exercise we
+         JOIN exercise_master em ON em.id = we.exercise_id
+         WHERE we.workout_id = ?
+         ORDER BY we.position, we.created_at`,
+      )
+      .bind(workoutId)
+      .all<CompletionExerciseRow>(),
+    db
+      .prepare(
+        `SELECT ws.id, ws.workout_exercise_id, ws.position, ws.status,
+                ws.set_type, ws.actual_load_grams, ws.actual_reps,
+                ws.deleted_at
+         FROM workout_set ws
+         JOIN workout_exercise we ON we.id = ws.workout_exercise_id
+         WHERE we.workout_id = ? AND ws.deleted_at IS NULL
+         ORDER BY we.position, ws.position, ws.created_at`,
+      )
+      .bind(workoutId)
+      .all<CompletionSetRow>(),
+  ]);
+
+  const setsByExercise = new Map<string, ProgressionPerformanceSet[]>();
+  for (const set of setResult.results) {
+    const sets = setsByExercise.get(set.workout_exercise_id) ?? [];
+    sets.push({
+      id: set.id,
+      position: Number(set.position),
+      status: set.status,
+      setType: set.set_type,
+      actualLoadGrams:
+        set.actual_load_grams === null ? null : Number(set.actual_load_grams),
+      actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      deletedAt: set.deleted_at,
+    });
+    setsByExercise.set(set.workout_exercise_id, sets);
+  }
+
+  const exercises: WorkoutCompletionProgressionExercise[] =
+    exerciseResult.results.map((row) => {
+      const master: ExerciseMaster = {
+        id: row.id,
+        name: row.name,
+        normalizedName: row.normalized_name,
+        bodyPart: row.body_part,
+        measurementType: 'weight_reps',
+        defaultRepMin:
+          row.default_rep_min === null ? null : Number(row.default_rep_min),
+        defaultRepMax:
+          row.default_rep_max === null ? null : Number(row.default_rep_max),
+        defaultWorkingSets:
+          row.default_working_sets === null
+            ? null
+            : Number(row.default_working_sets),
+        defaultIncrementGrams:
+          row.default_increment_grams === null
+            ? null
+            : Number(row.default_increment_grams),
+        defaultRestSeconds:
+          row.default_rest_seconds === null
+            ? null
+            : Number(row.default_rest_seconds),
+      };
+      const performance: ProgressionExercisePerformance = {
+        workoutId: workout.id,
+        workoutVersion: Number(workout.version),
+        workoutLocalDate: workout.local_date,
+        workoutUpdatedAt: workout.updated_at,
+        workoutStatus: workout.status,
+        workoutDeletedAt: workout.deleted_at,
+        workoutExerciseId: row.workout_exercise_id,
+        exerciseId: row.exercise_id,
+        exerciseStatus: row.exercise_status,
+        sets: setsByExercise.get(row.workout_exercise_id) ?? [],
+      };
+      const profile = resolveProgressionProfile(master);
+      return {
+        workoutExerciseId: row.workout_exercise_id,
+        exerciseId: row.exercise_id,
+        exerciseName: row.name,
+        position: Number(row.position),
+        profile,
+        performance,
+        decision: evaluateProgression(performance, profile),
+      };
+    });
+
+  return {
+    workoutId: workout.id,
+    workoutVersion: Number(workout.version),
+    totalExercises: exercises.length,
+    counts: {
+      increaseLoad: exercises.filter(
+        (exercise) => exercise.decision.status === 'increase_load',
+      ).length,
+      keepLoad: exercises.filter(
+        (exercise) => exercise.decision.status === 'keep_load',
+      ).length,
+      insufficientData: exercises.filter(
+        (exercise) => exercise.decision.status === 'insufficient_data',
+      ).length,
+    },
+    exercises,
   };
 }

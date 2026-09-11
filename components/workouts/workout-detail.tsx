@@ -45,6 +45,7 @@ import type { Workout } from '@/lib/workouts/types';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { CompletedWorkoutEditor } from './completed-workout-editor';
 import { ReviewConflictControl } from './review-conflict-control';
+import { WorkoutProgressionSummary } from './workout-progression-summary';
 
 type DetailSyncState = 'saved' | 'syncing' | 'pending' | 'error' | 'conflict';
 
@@ -493,6 +494,12 @@ export function WorkoutDetail({ id }: { id: string }) {
             />
           ) : (
             <>
+              {workout.status === 'completed' && !deleted && (
+                <WorkoutProgressionSummary
+                  workoutId={workout.id}
+                  workoutVersion={workout.version}
+                />
+              )}
               {workout.exercises.map((exercise, exerciseIndex) => (
                 <Card
                   key={exercise.id}

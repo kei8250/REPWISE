@@ -9,6 +9,7 @@ import type {
   WorkoutVersionConflictDetails,
 } from './types';
 import type { ExerciseProgressionRecommendation } from '@/lib/progression/engine';
+import type { WorkoutCompletionProgressionSummary } from '@/lib/progression/completion-summary';
 
 export class WorkoutApiError extends Error {
   constructor(
@@ -118,6 +119,17 @@ export function listWorkouts(
 export function getWorkout(id: string, fetcher?: FetchLike) {
   return request<Workout>(
     `/api/v2/workouts/${encodeURIComponent(id)}`,
+    {},
+    fetcher,
+  );
+}
+
+export function getWorkoutCompletionProgressionSummary(
+  id: string,
+  fetcher?: FetchLike,
+) {
+  return request<WorkoutCompletionProgressionSummary>(
+    `/api/v2/workouts/${encodeURIComponent(id)}/progression-summary`,
     {},
     fetcher,
   );

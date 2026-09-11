@@ -8,6 +8,7 @@ import type {
   WorkoutSummary,
   WorkoutVersionConflictDetails,
 } from './types';
+import type { ExerciseProgressionRecommendation } from '@/lib/progression/engine';
 
 export class WorkoutApiError extends Error {
   constructor(
@@ -81,6 +82,17 @@ export function createExerciseMaster(
   return request<ExerciseMaster>(
     '/api/v2/exercises',
     { method: 'POST', body: JSON.stringify(input) },
+    fetcher,
+  );
+}
+
+export function getExerciseProgressionRecommendation(
+  exerciseId: string,
+  fetcher?: FetchLike,
+) {
+  return request<ExerciseProgressionRecommendation>(
+    `/api/v2/exercises/${encodeURIComponent(exerciseId)}/progression`,
+    {},
     fetcher,
   );
 }

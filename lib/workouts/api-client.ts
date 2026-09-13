@@ -14,6 +14,7 @@ import type {
   AcceptNextTargetInput,
   AcceptNextTargetResult,
 } from '@/lib/progression/accepted-next-target';
+import type { AnalyticsRange, AnalyticsSnapshot } from '@/lib/analytics/model';
 
 export class WorkoutApiError extends Error {
   constructor(
@@ -146,6 +147,17 @@ export function acceptWorkoutNextTarget(
   return request<AcceptNextTargetResult>(
     '/api/v2/accepted-next-targets',
     { method: 'POST', body: JSON.stringify(input) },
+    fetcher,
+  );
+}
+
+export function getAnalytics(
+  range: AnalyticsRange = '30d',
+  fetcher?: FetchLike,
+) {
+  return request<AnalyticsSnapshot>(
+    `/api/v2/analytics?range=${encodeURIComponent(range)}`,
+    {},
     fetcher,
   );
 }

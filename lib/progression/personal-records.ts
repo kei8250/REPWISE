@@ -31,6 +31,11 @@ export interface PersonalRecordEvaluation {
     maxE1rmGrams: number | null;
     maxVolumeGramReps: number | null;
   };
+  repRecords: Array<{
+    loadGrams: number;
+    reps: number;
+    previousBestReps: number;
+  }>;
   e1rmExcludedHighRepSetCount: number;
 }
 
@@ -69,6 +74,7 @@ function emptyEvaluation(): PersonalRecordEvaluation {
       maxE1rmGrams: null,
       maxVolumeGramReps: null,
     },
+    repRecords: [],
     e1rmExcludedHighRepSetCount: 0,
   };
 }
@@ -144,6 +150,7 @@ export function evaluatePersonalRecords(
       maxE1rmGrams: previousMaxE1rm,
       maxVolumeGramReps: previousMaxVolume,
     },
+    repRecords: [] as PersonalRecordEvaluation['repRecords'],
     e1rmExcludedHighRepSetCount:
       currentSets.length - currentEligibleE1rmSets.length,
   };
@@ -156,28 +163,44 @@ export function evaluatePersonalRecords(
     };
   }
 
-  const repsPr = currentSets.some((currentSet) => {
-    const sameLoadReps = historicalSets
-      .filter(
-        (historicalSet) =>
-          historicalSet.actualLoadGrams === currentSet.actualLoadGrams,
-      )
-      .map((historicalSet) => historicalSet.actualReps as number);
-    const previousReps = maxOrNull(sameLoadReps);
-    return (
-      previousReps !== null && (currentSet.actualReps as number) > previousReps
+  const currentBestRepsByLoad = new Map<number, number>();
+  for (const set of currentSets) {
+    const loadGrams = set.actualLoadGrams as number;
+    currentBestRepsByLoad.set(
+      loadGrams,
+      Math.max(
+        currentBestRepsByLoad.get(loadGrams) ?? 0,
+        set.actualReps as number,
+      ),
     );
-  });
+  }
+  const repRecords = [...currentBestRepsByLoad]
+    .map(([loadGrams, reps]) => {
+      const previousBestReps = maxOrNull(
+        historicalSets
+          .filter((set) => set.actualLoadGrams === loadGrams)
+          .map((set) => set.actualReps as number),
+      );
+      return previousBestReps !== null && reps > previousBestReps
+        ? { loadGrams, reps, previousBestReps }
+        : null;
+    })
+    .filter(
+      (record): record is PersonalRecordEvaluation['repRecords'][number] =>
+        record !== null,
+    )
+    .sort((left, right) => left.loadGrams - right.loadGrams);
 
   return {
     ...base,
+    repRecords,
     status: 'evaluated',
     achieved: {
       weight:
         previousMaxLoad !== null &&
         currentMaxLoad !== null &&
         currentMaxLoad > previousMaxLoad,
-      reps: repsPr,
+      reps: repRecords.length > 0,
       e1rm:
         previousMaxE1rm !== null &&
         currentMaxE1rm !== null &&

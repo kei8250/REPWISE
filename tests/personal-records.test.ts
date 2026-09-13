@@ -55,6 +55,9 @@ describe('Phase 3C-2 personal record evaluation', () => {
       [performance('previous', [set('p1', 100_000, 9)])],
     );
     expect(result.achieved.reps).toBe(true);
+    expect(result.repRecords).toEqual([
+      { loadGrams: 100_000, reps: 10, previousBestReps: 9 },
+    ]);
   });
 
   it('D: 異なる重量同士のrepを単純比較しない', () => {

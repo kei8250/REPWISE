@@ -30,6 +30,11 @@ export interface AppliedAcceptedTargetAttempt {
   targetWorkingSets: number;
 }
 
+export type AcceptedTargetAttemptOutcome =
+  | 'achieved'
+  | 'missed'
+  | 'insufficient_data';
+
 export interface StagnationHistoryEntry {
   performance: ProgressionExercisePerformance;
   acceptedTarget?: AppliedAcceptedTargetAttempt | null;
@@ -100,22 +105,34 @@ function compareChronology(left: HistoryMetrics, right: HistoryMetrics) {
   return leftKey.localeCompare(rightKey);
 }
 
-function acceptedTargetMet(metrics: HistoryMetrics) {
-  const target = metrics.entry.acceptedTarget;
-  if (!target) return null;
-  if (metrics.sets.length !== target.targetWorkingSets) return false;
+export function evaluateAcceptedTargetAttempt(
+  performance: ProgressionExercisePerformance,
+  target: AppliedAcceptedTargetAttempt,
+): AcceptedTargetAttemptOutcome {
+  const metrics = metricsForEntry({ performance, acceptedTarget: target });
+  if (!metrics || metrics.sets.length !== target.targetWorkingSets) {
+    return 'insufficient_data';
+  }
   return metrics.sets.every(
     (set) =>
       set.loadGrams >= target.targetLoadGrams &&
       set.reps >= target.targetRepMax,
-  );
+  )
+    ? 'achieved'
+    : 'missed';
+}
+
+function acceptedTargetOutcome(metrics: HistoryMetrics) {
+  const target = metrics.entry.acceptedTarget;
+  if (!target) return null;
+  return evaluateAcceptedTargetAttempt(metrics.entry.performance, target);
 }
 
 function consecutiveAcceptedTargetMisses(recent: HistoryMetrics[]) {
   let misses = 0;
   for (let index = recent.length - 1; index >= 0; index -= 1) {
-    const met = acceptedTargetMet(recent[index]);
-    if (met === null || met) break;
+    const outcome = acceptedTargetOutcome(recent[index]);
+    if (outcome !== 'missed') break;
     misses += 1;
   }
   return misses;

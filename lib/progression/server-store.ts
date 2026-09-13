@@ -17,6 +17,11 @@ import {
   type PersonalRecordPerformance,
 } from './personal-records';
 import { getAcceptedTargetsForSummary } from './accepted-next-target-queries';
+import {
+  evaluateStagnation,
+  type AppliedAcceptedTargetAttempt,
+  type StagnationHistoryEntry,
+} from './stagnation';
 
 const ownerId = 'default';
 
@@ -79,7 +84,20 @@ type CompletionSetRow = PerformanceSetRow & {
 
 type PersonalRecordHistoryRow = PerformanceSetRow & {
   workout_id: string;
+  workout_version: number;
+  workout_local_date: string;
+  workout_updated_at: string;
+  workout_exercise_id: string;
   exercise_id: string;
+};
+
+type AppliedAcceptedTargetRow = {
+  applied_workout_id: string;
+  exercise_id: string;
+  target_load_grams: number;
+  target_rep_min: number;
+  target_rep_max: number;
+  target_working_sets: number;
 };
 
 async function getExerciseMaster(
@@ -276,7 +294,11 @@ export async function getWorkoutCompletionProgressionSummary(
       workout.ended_at ?? workout.updated_at ?? workout.started_at;
     const historyResult = await db
       .prepare(
-        `SELECT w.id AS workout_id, we.exercise_id, ws.id, ws.position,
+        `SELECT w.id AS workout_id, w.version AS workout_version,
+                w.local_date AS workout_local_date,
+                w.updated_at AS workout_updated_at,
+                we.id AS workout_exercise_id, we.exercise_id,
+                ws.id, ws.position,
                 ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps,
                 ws.deleted_at
          FROM workout_set ws
@@ -319,7 +341,68 @@ export async function getWorkoutCompletionProgressionSummary(
     historyRows.push(...historyResult.results);
   }
 
+  const appliedTargetByWorkoutExercise = new Map<
+    string,
+    AppliedAcceptedTargetAttempt
+  >();
+  if (exerciseIds.length > 0) {
+    const exercisePlaceholders = exerciseIds.map(() => '?').join(', ');
+    const currentCompletedAt =
+      workout.ended_at ?? workout.updated_at ?? workout.started_at;
+    const appliedResult = await db
+      .prepare(
+        `SELECT ant.applied_workout_id, ant.exercise_id,
+                ant.target_load_grams, ant.target_rep_min,
+                ant.target_rep_max, ant.target_working_sets
+         FROM accepted_next_target ant
+         JOIN workout w ON w.id = ant.applied_workout_id
+         WHERE ant.owner_id = ? AND ant.status = 'applied'
+           AND ant.exercise_id IN (${exercisePlaceholders})
+           AND w.owner_id = ? AND w.status = 'completed'
+           AND w.deleted_at IS NULL
+           AND (
+             w.local_date < ?
+             OR (
+               w.local_date = ?
+               AND COALESCE(w.ended_at, w.updated_at, w.started_at) < ?
+             )
+             OR (
+               w.local_date = ?
+               AND COALESCE(w.ended_at, w.updated_at, w.started_at) = ?
+               AND w.id <= ?
+             )
+           )
+         ORDER BY ant.updated_at DESC, ant.id DESC`,
+      )
+      .bind(
+        ownerId,
+        ...exerciseIds,
+        ownerId,
+        workout.local_date,
+        workout.local_date,
+        currentCompletedAt,
+        workout.local_date,
+        currentCompletedAt,
+        workout.id,
+      )
+      .all<AppliedAcceptedTargetRow>();
+    for (const target of appliedResult.results) {
+      const key = `${target.applied_workout_id}:${target.exercise_id}`;
+      if (appliedTargetByWorkoutExercise.has(key)) continue;
+      appliedTargetByWorkoutExercise.set(key, {
+        targetLoadGrams: Number(target.target_load_grams),
+        targetRepMin: Number(target.target_rep_min),
+        targetRepMax: Number(target.target_rep_max),
+        targetWorkingSets: Number(target.target_working_sets),
+      });
+    }
+  }
+
   const historyByExercise = new Map<string, PersonalRecordPerformance[]>();
+  const stagnationHistoryByExercise = new Map<
+    string,
+    StagnationHistoryEntry[]
+  >();
   for (const row of historyRows) {
     const performances = historyByExercise.get(row.exercise_id) ?? [];
     let performance = performances.find(
@@ -344,6 +427,44 @@ export async function getWorkoutCompletionProgressionSummary(
       deletedAt: row.deleted_at,
     });
     historyByExercise.set(row.exercise_id, performances);
+
+    const stagnationHistory =
+      stagnationHistoryByExercise.get(row.exercise_id) ?? [];
+    let stagnationEntry = stagnationHistory.find(
+      (candidate) => candidate.performance.workoutId === row.workout_id,
+    );
+    if (!stagnationEntry) {
+      stagnationEntry = {
+        performance: {
+          workoutId: row.workout_id,
+          workoutVersion: Number(row.workout_version),
+          workoutLocalDate: row.workout_local_date,
+          workoutUpdatedAt: row.workout_updated_at,
+          workoutStatus: 'completed',
+          workoutDeletedAt: null,
+          workoutExerciseId: row.workout_exercise_id,
+          exerciseId: row.exercise_id,
+          exerciseStatus: 'completed',
+          sets: [],
+        },
+        acceptedTarget:
+          appliedTargetByWorkoutExercise.get(
+            `${row.workout_id}:${row.exercise_id}`,
+          ) ?? null,
+      };
+      stagnationHistory.push(stagnationEntry);
+    }
+    stagnationEntry.performance.sets.push({
+      id: row.id,
+      position: Number(row.position),
+      status: row.status,
+      setType: row.set_type,
+      actualLoadGrams:
+        row.actual_load_grams === null ? null : Number(row.actual_load_grams),
+      actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      deletedAt: row.deleted_at,
+    });
+    stagnationHistoryByExercise.set(row.exercise_id, stagnationHistory);
   }
 
   const currentRecordSetsByExercise = new Map<
@@ -403,6 +524,19 @@ export async function getWorkoutCompletionProgressionSummary(
         },
         historyByExercise.get(row.exercise_id) ?? [],
       );
+      const stagnation = evaluateStagnation(
+        [
+          ...(stagnationHistoryByExercise.get(row.exercise_id) ?? []),
+          {
+            performance,
+            acceptedTarget:
+              appliedTargetByWorkoutExercise.get(
+                `${workout.id}:${row.exercise_id}`,
+              ) ?? null,
+          },
+        ],
+        profile,
+      );
       return {
         workoutExerciseId: row.workout_exercise_id,
         exerciseId: row.exercise_id,
@@ -413,6 +547,7 @@ export async function getWorkoutCompletionProgressionSummary(
         decision: evaluateProgression(performance, profile),
         personalRecords,
         acceptedNextTarget: acceptedTargets.get(row.exercise_id) ?? null,
+        stagnation,
       };
     });
 

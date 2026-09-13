@@ -207,6 +207,11 @@ describe('Phase 3C-1 completion progression summary', () => {
       reasonCode: 'all_sets_at_rep_max',
       nextTarget: { loadGrams: 102_500 },
     });
+    expect(exercise.stagnation).toMatchObject({
+      status: 'insufficient_data',
+      reasonCode: 'not_enough_history',
+      validHistoryCount: 1,
+    });
     expect(formatNextProgressionTarget(exercise.decision)).toBe(
       '102.5kg / 8〜10回 × 3セット',
     );

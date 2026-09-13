@@ -24,6 +24,10 @@ import {
   formatVolumeKg,
 } from '@/lib/progression/personal-records';
 import type { AcceptedNextTargetSummary } from '@/lib/progression/accepted-next-target';
+import {
+  stagnationReasonLabel,
+  stagnationStatusLabel,
+} from '@/lib/progression/stagnation';
 import { acceptWorkoutNextTarget } from '@/lib/workouts/api-client';
 
 export function WorkoutProgressionSummary({
@@ -192,6 +196,17 @@ export function WorkoutProgressionSummary({
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {progressionReasonLabel(exercise.decision.reasonCode)}
                         </p>
+                        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+                          <span
+                            className={`font-black ${exercise.stagnation.status === 'progressing' ? 'text-emerald-700' : exercise.stagnation.status === 'stagnating' ? 'text-amber-700' : 'text-muted-foreground'}`}
+                          >
+                            状態：
+                            {stagnationStatusLabel(exercise.stagnation.status)}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {stagnationReasonLabel(exercise.stagnation)}
+                          </span>
+                        </div>
                         {exercise.personalRecords.status === 'first_record' ? (
                           <Badge variant="secondary" className="mt-2">
                             初回記録

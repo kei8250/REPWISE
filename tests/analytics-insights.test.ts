@@ -100,8 +100,22 @@ const types = (data: AnalyticsSnapshot) =>
   buildAnalyticsInsights(data).items.map((item) => item.type);
 
 describe('Phase 4D insight engine', () => {
-  it('A: existing progression produces a positive insight', () =>
-    expect(types(snapshot())).toContain('progressing'));
+  it('A: existing progression produces a positive insight with matching evidence', () => {
+    expect(types(snapshot())).toContain('progressing');
+    const data = snapshot([
+      exercise({
+        progression: {
+          ...exercise().progression,
+          status: 'increase_load',
+          reasonCode: 'all_sets_at_rep_max',
+          evaluatedSetIds: ['a', 'b', 'c'],
+        },
+      }),
+    ]);
+    expect(buildAnalyticsInsights(data).items[0].supportingData).toMatchObject({
+      reasonCode: 'all_sets_at_rep_max',
+    });
+  });
   it('B: existing stagnation is high priority and suppresses positive duplicate', () => {
     const data = snapshot([
       exercise({

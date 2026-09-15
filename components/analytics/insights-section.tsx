@@ -7,6 +7,7 @@ const evidenceLabels: Record<string, string> = {
   e1rm: 'e1RM',
   volume: 'Volume',
   targetLoad: '目標重量',
+  evaluatedWorkingSets: '達成判定セット数',
 };
 
 function supportingValue(value: number | string, unit?: string) {

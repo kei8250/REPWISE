@@ -120,14 +120,12 @@ export function buildAnalyticsInsights(
       (p) =>
         p.localDate >= recentStart && p.localDate <= analytics.period.endDate,
     );
-    const historyValues = exercise.e1rmTrend
-      .slice(-3)
-      .map((p) => ({
-        label: 'e1RM',
-        value: p.value,
-        unit: 'grams',
-        date: p.localDate,
-      }));
+    const historyValues = exercise.e1rmTrend.slice(-3).map((p) => ({
+      label: 'e1RM',
+      value: p.value,
+      unit: 'grams',
+      date: p.localDate,
+    }));
     if (recent && exercise.stagnation.status === 'stagnating') {
       items.push({
         id: `state:${exercise.exerciseId}`,
@@ -157,8 +155,22 @@ export function buildAnalyticsInsights(
             : stagnationReasonLabel(exercise.stagnation),
         ...identity,
         supportingData: {
-          reasonCode: exercise.stagnation.reasonCode,
-          values: historyValues,
+          reasonCode:
+            exercise.progression.status === 'increase_load'
+              ? exercise.progression.reasonCode
+              : exercise.stagnation.reasonCode,
+          values: [
+            ...historyValues,
+            ...(exercise.progression.evaluatedSetIds.length > 0
+              ? [
+                  {
+                    label: 'evaluatedWorkingSets',
+                    value: exercise.progression.evaluatedSetIds.length,
+                    unit: 'sets',
+                  },
+                ]
+              : []),
+          ],
         },
       });
     }

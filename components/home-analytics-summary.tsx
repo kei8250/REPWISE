@@ -15,6 +15,7 @@ import type {
   HomePersonalRecordItem,
 } from '@/lib/analytics/home-summary';
 import { APP_ROUTES } from '@/lib/routes';
+import { InsightsSection } from '@/components/analytics/insights-section';
 
 export type HomeAnalyticsState =
   | { status: 'loading'; data: null }
@@ -128,6 +129,12 @@ export function HomeAnalyticsSection({
   return (
     <section aria-labelledby="home-analytics-title">
       <AnalyticsSectionHeading period />
+
+      {summary.insights && (
+        <div className="mb-4">
+          <InsightsSection summary={summary.insights} />
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {summary.acceptedTargets.length > 0 && (

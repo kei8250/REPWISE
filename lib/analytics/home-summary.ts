@@ -4,6 +4,7 @@ import type {
   PersonalRecordType,
 } from './model';
 import { stagnationReasonLabel } from '@/lib/progression/stagnation';
+import { getInsightsForView, type AnalyticsInsightSummary } from './insights';
 
 export interface HomePersonalRecordItem {
   workoutId: string;
@@ -31,6 +32,7 @@ export interface HomeAcceptedTargetItem {
 }
 
 export interface HomeAnalyticsSummary {
+  insights?: AnalyticsInsightSummary;
   hasTrainingData: boolean;
   workoutCount30d: number;
   trainingDayCount30d: number;
@@ -114,6 +116,7 @@ export function buildHomeAnalyticsSummary(
 
   return {
     hasTrainingData: analytics.workouts.completedWorkoutCount > 0,
+    insights: getInsightsForView(analytics, 'home'),
     workoutCount30d: analytics.workouts.completedWorkoutCount,
     trainingDayCount30d: analytics.workouts.trainingDayCount,
     weeklyAverageWorkoutCount: analytics.workouts.weeklyAverageWorkoutCount,

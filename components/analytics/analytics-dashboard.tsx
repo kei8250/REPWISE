@@ -12,6 +12,8 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { TrendChart } from './trend-chart';
+import { InsightsSection } from './insights-section';
+import { getInsightsForView } from '@/lib/analytics/insights';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   NativeSelect,
@@ -185,6 +187,10 @@ export function AnalyticsDataView({
 
   return (
     <div className="space-y-5">
+      <InsightsSection
+        summary={getInsightsForView(analytics, 'detail')}
+        detailed
+      />
       <section aria-labelledby="period-summary-title">
         <div className="mb-3 flex items-end justify-between gap-3">
           <h2 id="period-summary-title" className="text-lg font-black">

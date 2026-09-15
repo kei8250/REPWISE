@@ -6,6 +6,7 @@ import type {
   AcceptedTargetAttemptOutcome,
   StagnationEvaluation,
 } from '@/lib/progression/stagnation';
+import type { AnalyticsInsightSummary } from './insights';
 
 export const ANALYTICS_RANGES = ['7d', '30d', '90d', 'all'] as const;
 export type AnalyticsRange = (typeof ANALYTICS_RANGES)[number];
@@ -97,6 +98,7 @@ export interface ExerciseAnalytics {
   personalRecordHistory: PersonalRecordHistoryEvent[];
   acceptedTargetHistory: AcceptedTargetAnalytics[];
   currentAcceptedTarget: AcceptedTargetAnalytics | null;
+  currentTargetForReview?: AcceptedTargetAnalytics | null;
 }
 
 export interface BodyPartAnalytics {
@@ -108,6 +110,7 @@ export interface BodyPartAnalytics {
 }
 
 export interface AnalyticsSnapshot {
+  insights?: AnalyticsInsightSummary;
   generatedAt: string;
   period: AnalyticsPeriod;
   workouts: WorkoutAnalytics;

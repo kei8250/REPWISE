@@ -157,6 +157,12 @@ describe('Phase 4A analytics D1 service', () => {
     expect(result.exercises[0].maxWeightTrend).not.toContainEqual(
       expect.objectContaining({ value: 120_000 }),
     );
+    expect(result.insights?.items).toContainEqual(
+      expect.objectContaining({
+        type: 'recent_pr',
+        exerciseId: 'ex-bench-press',
+      }),
+    );
   });
 
   it('soft delete後は再計算から除外しrestore後に再反映する', async () => {

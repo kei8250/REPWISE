@@ -4,6 +4,7 @@ import {
   type ProgressionPerformanceSet,
   type ProgressionProfile,
 } from '@/lib/progression/engine';
+import { buildAnalyticsInsights, buildFrequencyComparison } from './insights';
 import {
   calculateE1rmGrams,
   E1RM_MAX_REPS,
@@ -332,7 +333,6 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
       !target.appliedWorkoutId &&
       !target.sourceDeletedAt &&
       target.sourceWorkoutStatus === 'completed' &&
-      target.sourceCurrentVersion === target.sourceWorkoutVersion &&
       historyByExercise.has(target.exerciseId)
     ) {
       periodExerciseIds.add(target.exerciseId);
@@ -469,6 +469,15 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
           period,
         ),
         currentAcceptedTarget,
+        currentTargetForReview:
+          allAcceptedTargets
+            .filter(
+              (target) =>
+                target.status === 'accepted' &&
+                !target.appliedWorkoutId &&
+                target.validity === 'stale_source_version',
+            )
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null,
       };
     })
     .sort((left, right) =>
@@ -513,11 +522,18 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
     }))
     .sort((left, right) => left.bodyPart.localeCompare(right.bodyPart, 'ja'));
 
-  return {
+  const snapshot: AnalyticsSnapshot = {
     generatedAt: input.generatedAt,
     period,
     workouts: buildWorkoutAnalytics(input.workouts, periodHistory, period),
     exercises,
     bodyParts,
+  };
+  return {
+    ...snapshot,
+    insights: buildAnalyticsInsights(
+      snapshot,
+      buildFrequencyComparison(input.workouts, period),
+    ),
   };
 }

@@ -44,6 +44,8 @@ export interface AnalyticsAcceptedTargetInput extends AppliedAcceptedTargetAttem
   exerciseId: string;
   sourceWorkoutId: string;
   sourceWorkoutVersion: number;
+  sourceCurrentVersion: number;
+  sourceWorkoutStatus: string;
   sourceLocalDate: string;
   acceptedAt: string;
   updatedAt: string;
@@ -233,6 +235,12 @@ function acceptedTargetHistory(
         targetRepMin: target.targetRepMin,
         targetRepMax: target.targetRepMax,
         targetWorkingSets: target.targetWorkingSets,
+        validity:
+          target.sourceWorkoutStatus !== 'completed'
+            ? 'invalid_source'
+            : target.sourceCurrentVersion === target.sourceWorkoutVersion
+              ? 'valid'
+              : 'stale_source_version',
         outcome,
       };
     });
@@ -318,6 +326,18 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
   const periodExerciseIds = new Set(
     periodHistory.map((item) => item.performance.exerciseId),
   );
+  for (const target of input.acceptedTargets) {
+    if (
+      target.status === 'accepted' &&
+      !target.appliedWorkoutId &&
+      !target.sourceDeletedAt &&
+      target.sourceWorkoutStatus === 'completed' &&
+      target.sourceCurrentVersion === target.sourceWorkoutVersion &&
+      historyByExercise.has(target.exerciseId)
+    ) {
+      periodExerciseIds.add(target.exerciseId);
+    }
+  }
   const exercises: ExerciseAnalytics[] = [...periodExerciseIds]
     .map((exerciseId) => {
       const history = historyByExercise.get(exerciseId) ?? [];
@@ -389,6 +409,25 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
           acceptedTarget: acceptedByWorkout.get(item.performance.workoutId),
         }),
       );
+      const allAcceptedTargets = acceptedTargetHistory(
+        exerciseId,
+        input.acceptedTargets,
+        historyByWorkout,
+        resolveAnalyticsPeriod('all', period.endDate),
+      );
+      const currentAcceptedTarget =
+        allAcceptedTargets
+          .filter(
+            (target) =>
+              target.status === 'accepted' &&
+              !target.appliedWorkoutId &&
+              target.validity === 'valid',
+          )
+          .sort((left, right) =>
+            `${right.updatedAt}\u0000${right.id}`.localeCompare(
+              `${left.updatedAt}\u0000${left.id}`,
+            ),
+          )[0] ?? null;
       return {
         exerciseId,
         exerciseName: latest.exerciseName,
@@ -418,6 +457,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
           historyByWorkout,
           period,
         ),
+        currentAcceptedTarget,
       };
     })
     .sort((left, right) =>

@@ -1,13 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import {
-  ArrowRight,
-  ChevronRight,
-  Clock3,
-  Dumbbell,
-  History,
-} from 'lucide-react';
+import { ArrowRight, ChevronRight, Clock3, History } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +19,11 @@ import {
 } from '@/lib/workouts/local-drafts';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { APP_ROUTES, workoutRoute } from '@/lib/routes';
+import {
+  HomeAnalyticsSection,
+  type HomeAnalyticsState,
+} from '@/components/home-analytics-summary';
+import { loadHomeAnalyticsSummary } from '@/lib/analytics/home-cache';
 
 export function HomeV2() {
   const [active, setActive] = useState<WorkoutSummary | null>(null);
@@ -36,6 +35,11 @@ export function HomeV2() {
     workout: null,
   });
   const [completedAttempt, setCompletedAttempt] = useState(0);
+  const [analyticsState, setAnalyticsState] = useState<HomeAnalyticsState>({
+    status: 'loading',
+    data: null,
+  });
+  const [analyticsAttempt, setAnalyticsAttempt] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -82,6 +86,21 @@ export function HomeV2() {
       mounted = false;
     };
   }, [completedAttempt]);
+
+  useEffect(() => {
+    let mounted = true;
+    void loadHomeAnalyticsSummary(analyticsAttempt > 0).then(
+      (data) => {
+        if (mounted) setAnalyticsState({ status: 'success', data });
+      },
+      () => {
+        if (mounted) setAnalyticsState({ status: 'error', data: null });
+      },
+    );
+    return () => {
+      mounted = false;
+    };
+  }, [analyticsAttempt]);
 
   const recent = completedState.workout;
   return (
@@ -184,22 +203,13 @@ export function HomeV2() {
           </CardContent>
         </Card>
       </div>
-      {!active && activeStatus !== 'loading' && (
-        <Card className="rounded-3xl border-dashed py-5 shadow-none">
-          <CardContent className="flex items-center gap-4 px-5">
-            <span className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Dumbbell />
-            </span>
-            <div>
-              <p className="font-bold">次に何をする？</p>
-              <p className="text-sm text-muted-foreground">
-                Phase
-                1Aでは自由に記録を開始します。自動メニュー提案は後続Phaseです。
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <HomeAnalyticsSection
+        state={analyticsState}
+        onRetry={() => {
+          setAnalyticsState({ status: 'loading', data: null });
+          setAnalyticsAttempt((attempt) => attempt + 1);
+        }}
+      />
     </div>
   );
 }

@@ -75,6 +75,7 @@ export interface AcceptedTargetAnalytics {
   targetRepMin: number;
   targetRepMax: number;
   targetWorkingSets: number;
+  validity: 'valid' | 'stale_source_version' | 'invalid_source';
   outcome: AcceptedTargetAnalyticsOutcome;
 }
 
@@ -94,6 +95,7 @@ export interface ExerciseAnalytics {
   repTrend: RepTrendPoint[];
   personalRecordHistory: PersonalRecordHistoryEvent[];
   acceptedTargetHistory: AcceptedTargetAnalytics[];
+  currentAcceptedTarget: AcceptedTargetAnalytics | null;
 }
 
 export interface BodyPartAnalytics {

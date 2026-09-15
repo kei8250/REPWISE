@@ -46,6 +46,8 @@ type AcceptedTargetRow = {
   exercise_id: string;
   source_workout_id: string;
   source_workout_version: number;
+  source_current_version: number;
+  source_workout_status: string;
   source_local_date: string;
   created_at: string;
   updated_at: string;
@@ -182,7 +184,10 @@ export async function getAnalyticsSnapshot(
       db
         .prepare(
           `SELECT ant.id, ant.exercise_id, ant.source_workout_id,
-                  ant.source_workout_version, source.local_date AS source_local_date,
+                  ant.source_workout_version,
+                  source.version AS source_current_version,
+                  source.status AS source_workout_status,
+                  source.local_date AS source_local_date,
                   source.deleted_at AS source_deleted_at,
                   ant.created_at, ant.updated_at,
                   ant.status, ant.applied_workout_id,
@@ -214,6 +219,8 @@ export async function getAnalyticsSnapshot(
       exerciseId: row.exercise_id,
       sourceWorkoutId: row.source_workout_id,
       sourceWorkoutVersion: Number(row.source_workout_version),
+      sourceCurrentVersion: Number(row.source_current_version),
+      sourceWorkoutStatus: row.source_workout_status,
       sourceLocalDate: row.source_local_date,
       acceptedAt: row.created_at,
       updatedAt: row.updated_at,

@@ -86,6 +86,8 @@ function acceptedTarget(
     exerciseId: 'bench',
     sourceWorkoutId: 'workout-1',
     sourceWorkoutVersion: 1,
+    sourceCurrentVersion: 1,
+    sourceWorkoutStatus: 'completed',
     sourceLocalDate: '2026-09-01',
     acceptedAt: '2026-09-02T09:00:00.000Z',
     updatedAt: '2026-09-02T09:00:00.000Z',
@@ -433,9 +435,51 @@ describe('Phase 4A analytics engine', () => {
     expect(result.exercises[0].acceptedTargetHistory).toEqual([]);
   });
 
-  it('19: clientは期間を1つのanalytics APIへ渡してwaterfallを作らない', async () => {
+  it('19: current accepted targetは期間外の履歴を根拠にしていても有効なら返す', () => {
+    const result = analytics(
+      [history('workout-1', '2026-08-01', 100_000, 10)],
+      {
+        range: '7d',
+        acceptedTargets: [
+          acceptedTarget({ status: 'accepted', appliedWorkoutId: null }),
+        ],
+      },
+    );
+    expect(result.exercises[0].currentAcceptedTarget).toMatchObject({
+      id: 'target-1',
+      validity: 'valid',
+      appliedWorkoutId: null,
+    });
+  });
+
+  it('20: staleまたはappliedのaccepted targetは現在の次回目標にしない', () => {
+    const stale = analytics([history('workout-1', '2026-09-01', 100_000, 10)], {
+      acceptedTargets: [
+        acceptedTarget({
+          status: 'accepted',
+          appliedWorkoutId: null,
+          sourceCurrentVersion: 2,
+        }),
+      ],
+    });
+    expect(stale.exercises[0].currentAcceptedTarget).toBeNull();
+
+    const applied = analytics(
+      [history('workout-1', '2026-09-01', 100_000, 10)],
+      { acceptedTargets: [acceptedTarget()] },
+    );
+    expect(applied.exercises[0].currentAcceptedTarget).toBeNull();
+  });
+
+  it('21: clientは期間を1つのanalytics APIへ渡してwaterfallを作らない', async () => {
     const fetcher = async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe('/api/v2/analytics?range=90d');
+      const requestUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      expect(requestUrl).toBe('/api/v2/analytics?range=90d');
       return new Response(
         JSON.stringify(
           analytics([history('w1', '2026-09-30', 100_000, 8)], {

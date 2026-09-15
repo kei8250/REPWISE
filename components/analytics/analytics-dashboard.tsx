@@ -240,7 +240,7 @@ export function AnalyticsDataView({
                   分析する種目
                 </span>
                 <NativeSelect
-                  className="w-full min-w-0 sm:w-72"
+                  className="w-full min-w-0 [&>select]:h-11 sm:w-72"
                   value={selectedExercise.exerciseId}
                   onChange={(event) => onSelectExercise(event.target.value)}
                   aria-label="分析する種目"

@@ -216,6 +216,13 @@ describe('Phase 4A analytics engine', () => {
     expect(result.workouts.totalVolumeGramReps).toBe(1_900_000);
     expect(result.workouts.volumeByWorkout[0].volumeGramReps).toBe(1_900_000);
     expect(result.exercises[0].totalVolumeGramReps).toBe(1_900_000);
+    expect(result.exercises[0].volumeTrend).toEqual([
+      {
+        workoutId: 'w1',
+        localDate: '2026-09-30',
+        value: 1_900_000,
+      },
+    ]);
     expect(result.bodyParts[0].totalVolumeGramReps).toBe(1_900_000);
   });
 

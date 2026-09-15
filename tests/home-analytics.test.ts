@@ -70,6 +70,7 @@ function exercise(
     },
     e1rmTrend: [],
     maxWeightTrend: [],
+    volumeTrend: [],
     repTrend: [],
     personalRecordHistory: [],
     acceptedTargetHistory: [],

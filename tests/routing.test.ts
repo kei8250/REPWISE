@@ -21,6 +21,7 @@ describe('Phase 1A routing', () => {
     expect(APP_ROUTES.home).toBe('/');
     expect(APP_ROUTES.newWorkout).toBe('/workouts/new');
     expect(APP_ROUTES.history).toBe('/history');
+    expect(APP_ROUTES.analytics).toBe('/analytics');
     expect(APP_ROUTES.workoutDetail('workout-123')).toBe(
       '/workouts/workout-123',
     );

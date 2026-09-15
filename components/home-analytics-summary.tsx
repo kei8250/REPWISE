@@ -3,6 +3,7 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   RefreshCw,
   Target,
@@ -13,6 +14,7 @@ import type {
   HomeAnalyticsSummary,
   HomePersonalRecordItem,
 } from '@/lib/analytics/home-summary';
+import { APP_ROUTES } from '@/lib/routes';
 
 export type HomeAnalyticsState =
   | { status: 'loading'; data: null }
@@ -39,6 +41,30 @@ function personalRecordLabel(record: HomePersonalRecordItem) {
   return `Volume PR ${formatKg(record.value)}`;
 }
 
+function AnalyticsSectionHeading({ period = false }: { period?: boolean }) {
+  return (
+    <div className="mb-3 flex items-end justify-between gap-3">
+      <div>
+        <p className="text-xs font-bold tracking-[0.16em] text-primary">
+          RECENT STATUS
+        </p>
+        <h2 id="home-analytics-title" className="mt-1 text-xl font-black">
+          最近の状態
+        </h2>
+      </div>
+      <div className="flex flex-col items-end gap-1">
+        {period && <p className="text-xs text-muted-foreground">直近30日</p>}
+        <a
+          href={APP_ROUTES.analytics}
+          className="inline-flex min-h-8 items-center gap-1 text-xs font-bold text-primary"
+        >
+          詳しい分析を見る <ArrowRight className="size-3.5" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function HomeAnalyticsSection({
   state,
   onRetry,
@@ -48,7 +74,8 @@ export function HomeAnalyticsSection({
 }) {
   if (state.status === 'loading') {
     return (
-      <section aria-label="最近の状態" aria-live="polite">
+      <section aria-labelledby="home-analytics-title" aria-live="polite">
+        <AnalyticsSectionHeading />
         <Card className="rounded-3xl border-dashed py-5 shadow-none">
           <CardContent className="flex items-center gap-3 px-5 text-sm text-muted-foreground">
             <Activity className="size-5 animate-pulse text-primary" />
@@ -61,7 +88,8 @@ export function HomeAnalyticsSection({
 
   if (state.status === 'error') {
     return (
-      <section aria-label="最近の状態" aria-live="polite">
+      <section aria-labelledby="home-analytics-title" aria-live="polite">
+        <AnalyticsSectionHeading />
         <Card className="rounded-3xl border-dashed py-5 shadow-none">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 px-5">
             <p className="text-sm text-muted-foreground">
@@ -84,14 +112,7 @@ export function HomeAnalyticsSection({
   if (!summary.hasTrainingData) {
     return (
       <section aria-labelledby="home-analytics-title">
-        <div className="mb-3">
-          <p className="text-xs font-bold tracking-[0.16em] text-primary">
-            RECENT STATUS
-          </p>
-          <h2 id="home-analytics-title" className="mt-1 text-xl font-black">
-            最近の状態
-          </h2>
-        </div>
+        <AnalyticsSectionHeading period />
         <Card className="rounded-3xl border-dashed py-5 shadow-none">
           <CardContent className="px-5">
             <p className="font-bold">まだ分析できる記録がありません</p>
@@ -106,17 +127,7 @@ export function HomeAnalyticsSection({
 
   return (
     <section aria-labelledby="home-analytics-title">
-      <div className="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold tracking-[0.16em] text-primary">
-            RECENT STATUS
-          </p>
-          <h2 id="home-analytics-title" className="mt-1 text-xl font-black">
-            最近の状態
-          </h2>
-        </div>
-        <p className="text-xs text-muted-foreground">直近30日</p>
-      </div>
+      <AnalyticsSectionHeading period />
 
       <div className="grid gap-4 lg:grid-cols-2">
         {summary.acceptedTargets.length > 0 && (

@@ -379,6 +379,16 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
           ),
         ),
       }));
+      const volumeTrend = inRange.map((item) => ({
+        workoutId: item.performance.workoutId,
+        localDate: item.performance.workoutLocalDate,
+        value: validSets(item.performance).reduce(
+          (total, set) =>
+            total +
+            (set.actualLoadGrams as number) * (set.actualReps as number),
+          0,
+        ),
+      }));
       const repTrend = inRange.flatMap((item) => {
         const bestByLoad = new Map<number, number>();
         for (const set of validSets(item.performance)) {
@@ -449,6 +459,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         stagnation: evaluateStagnation(stagnationHistory, latest.profile),
         e1rmTrend,
         maxWeightTrend,
+        volumeTrend,
         repTrend,
         personalRecordHistory: personalRecordHistory(history, period),
         acceptedTargetHistory: acceptedTargetHistory(

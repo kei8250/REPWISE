@@ -92,6 +92,7 @@ export interface ExerciseAnalytics {
   stagnation: StagnationEvaluation;
   e1rmTrend: ExerciseTrendPoint[];
   maxWeightTrend: ExerciseTrendPoint[];
+  volumeTrend: ExerciseTrendPoint[];
   repTrend: RepTrendPoint[];
   personalRecordHistory: PersonalRecordHistoryEvent[];
   acceptedTargetHistory: AcceptedTargetAnalytics[];

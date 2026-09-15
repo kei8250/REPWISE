@@ -4,6 +4,7 @@ export const APP_ROUTES = {
   home: '/',
   newWorkout: '/workouts/new',
   history: '/history',
+  analytics: '/analytics',
   workoutDetail: (id: string) => `/workouts/${encodeURIComponent(id)}`,
   activeWorkout: (id: string) => `/workouts/active/${encodeURIComponent(id)}`,
 } as const;

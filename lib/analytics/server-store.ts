@@ -1,4 +1,8 @@
-import { buildAnalytics, type AnalyticsExerciseHistoryInput } from './engine';
+import {
+  buildAnalytics,
+  type AnalyticsExerciseHistoryInput,
+  type BuildAnalyticsInput,
+} from './engine';
 import type { AnalyticsRange, AnalyticsSnapshot } from './model';
 import {
   resolveProgressionProfile,
@@ -131,11 +135,12 @@ function groupExerciseHistory(rows: PerformanceRow[]) {
   return [...byWorkoutExercise.values()];
 }
 
-export async function getAnalyticsSnapshot(
+// Shared request-scoped input: analytics and coach consume the same reads/rules.
+export async function getAnalyticsInput(
   db: D1Database,
   range: AnalyticsRange,
   now = new Date(),
-): Promise<AnalyticsSnapshot> {
+): Promise<BuildAnalyticsInput> {
   const [workoutResult, performanceResult, acceptedTargetResult] =
     await Promise.all([
       db
@@ -205,7 +210,7 @@ export async function getAnalyticsSnapshot(
         .all<AcceptedTargetRow>(),
     ]);
 
-  return buildAnalytics({
+  return {
     range,
     today: localDateInTimeZone(now, 'Asia/Tokyo'),
     generatedAt: now.toISOString(),
@@ -234,5 +239,13 @@ export async function getAnalyticsSnapshot(
       targetRepMax: Number(row.target_rep_max),
       targetWorkingSets: Number(row.target_working_sets),
     })),
-  });
+  };
+}
+
+export async function getAnalyticsSnapshot(
+  db: D1Database,
+  range: AnalyticsRange,
+  now = new Date(),
+): Promise<AnalyticsSnapshot> {
+  return buildAnalytics(await getAnalyticsInput(db, range, now));
 }

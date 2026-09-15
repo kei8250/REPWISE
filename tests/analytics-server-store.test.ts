@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getAnalyticsSnapshot } from '@/lib/analytics/server-store';
+import { getCoachContext } from '@/lib/coach/server-service';
 
 type SqlValue = null | number | bigint | string | Uint8Array;
 
@@ -21,6 +22,10 @@ class TestStatement {
       results: this.statement.all(...this.values) as T[],
       meta: { changes: 0 },
     };
+  }
+
+  async first<T>() {
+    return (this.statement.get(...this.values) as T | undefined) ?? null;
   }
 }
 
@@ -111,6 +116,93 @@ beforeEach(() => {
 afterEach(() => sqlite.close());
 
 describe('Phase 4A analytics D1 service', () => {
+  it('Phase 5A active server snapshot has explicit provenance and Analytics is read once', async () => {
+    insertWorkout(sqlite, 'active-coach', '2026-09-14', 100_000, 8);
+    sqlite
+      .prepare("UPDATE workout SET status = 'active' WHERE id = 'active-coach'")
+      .run();
+    sqlite
+      .prepare(
+        "UPDATE workout_set SET target_load_grams = 102500, actual_load_grams = NULL, actual_reps = NULL, status = 'planned' WHERE id = 'active-coach-set'",
+      )
+      .run();
+    const queries: string[] = [];
+    const countingDb = {
+      prepare(query: string) {
+        queries.push(query);
+        return db.prepare(query);
+      },
+    } as unknown as D1Database;
+    const result = await getCoachContext(
+      countingDb,
+      new Date('2026-09-15T00:00:00Z'),
+    );
+    expect(result.activeState).toBe('server_snapshot');
+    expect(result.activeWorkout?.source.workoutId).toBe('active-coach');
+    expect(result.activeWorkout?.exercises[0].sets[0]).toMatchObject({
+      target: { loadGrams: 102500 },
+      actualLoadGrams: null,
+      actualReps: null,
+    });
+    expect(result.trainingSummary.completedWorkoutCount).toBe(0);
+    expect(queries).toHaveLength(7);
+    expect(queries.every((query) => /^\s*SELECT/.test(query))).toBe(true);
+  });
+
+  it('Phase 5A active read failure is unavailable, while Analytics failure propagates', async () => {
+    const activeFailureDb = {
+      prepare(query: string) {
+        if (query.includes('COUNT(DISTINCT'))
+          throw new Error('active read failed');
+        return db.prepare(query);
+      },
+    } as unknown as D1Database;
+    const result = await getCoachContext(activeFailureDb);
+    expect(result.activeState).toBe('unavailable');
+    const failingDb = {
+      prepare() {
+        throw new Error('Analytics read failed');
+      },
+    } as unknown as D1Database;
+    await expect(getCoachContext(failingDb)).rejects.toThrow(
+      'Analytics read failed',
+    );
+  });
+
+  it('Phase 5A server service shares Analytics facts, excludes deleted data and reflects edits', async () => {
+    insertWorkout(sqlite, 'coach-source', '2026-09-08', 100_000, 10);
+    insertWorkout(
+      sqlite,
+      'coach-deleted',
+      '2026-09-09',
+      120_000,
+      10,
+      timestamp,
+    );
+    const now = new Date('2026-09-15T00:00:00Z');
+    let context = await getCoachContext(db, now);
+    const snapshot = await getAnalyticsSnapshot(db, '30d', now);
+    expect(context.exercises[0].progression).toEqual(
+      snapshot.exercises[0].progression,
+    );
+    expect(context.trainingSummary.completedWorkoutCount).toBe(1);
+    expect(context.recentWorkouts[0].source.workoutId).toBe('coach-source');
+    expect(context.activeState).toBe('none');
+    sqlite
+      .prepare(
+        "UPDATE workout_set SET actual_reps = 8 WHERE id = 'coach-source-set'",
+      )
+      .run();
+    sqlite
+      .prepare("UPDATE workout SET version = 2 WHERE id = 'coach-source'")
+      .run();
+    context = await getCoachContext(db, now);
+    expect(context.recentWorkouts[0].exercises[0].sets[0].actualReps).toBe(8);
+    expect(context.recentWorkouts[0].source.workoutVersion).toBe(2);
+    expect(context.exercises[0].progression).toEqual(
+      (await getAnalyticsSnapshot(db, '30d', now)).exercises[0].progression,
+    );
+  });
   it('completedな有効履歴とaccepted targetを3本の並列readで集約する', async () => {
     insertWorkout(sqlite, 'source', '2026-09-08', 100_000, 9);
     insertWorkout(sqlite, 'applied', '2026-09-09', 100_000, 10);

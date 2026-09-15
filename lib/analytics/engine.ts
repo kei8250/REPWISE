@@ -93,7 +93,7 @@ function inPeriod(localDate: string, period: AnalyticsPeriod) {
   );
 }
 
-function validSets(performance: ProgressionExercisePerformance) {
+export function validSets(performance: ProgressionExercisePerformance) {
   if (
     performance.workoutStatus !== 'completed' ||
     performance.workoutDeletedAt ||

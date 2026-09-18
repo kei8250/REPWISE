@@ -132,7 +132,7 @@ export function HomeAnalyticsSection({
 
       {summary.insights && (
         <div className="mb-4">
-          <InsightsSection summary={summary.insights} />
+          <InsightsSection summary={summary.insights} exerciseLinks />
         </div>
       )}
 
@@ -146,9 +146,10 @@ export function HomeAnalyticsSection({
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {summary.acceptedTargets.map((target) => (
-                  <div
+                  <a
                     key={target.exerciseId}
-                    className="rounded-2xl bg-background/80 px-4 py-3"
+                    href={APP_ROUTES.analyticsExercise(target.exerciseId)}
+                    className="block min-h-11 rounded-2xl bg-background/80 px-4 py-3 transition hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
                     <p className="text-sm font-bold">{target.exerciseName}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -156,7 +157,7 @@ export function HomeAnalyticsSection({
                       {target.targetRepMin}〜{target.targetRepMax}回 ×{' '}
                       {target.targetWorkingSets}
                     </p>
-                  </div>
+                  </a>
                 ))}
               </div>
             </CardContent>
@@ -172,12 +173,21 @@ export function HomeAnalyticsSection({
             {summary.stagnatingExercises.length > 0 ? (
               <div className="mt-3 space-y-3">
                 {summary.stagnatingExercises.map((exercise) => (
-                  <div key={exercise.exerciseId}>
-                    <p className="text-sm font-bold">{exercise.exerciseName}</p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                      {exercise.reason}
-                    </p>
-                  </div>
+                  <a
+                    key={exercise.exerciseId}
+                    href={APP_ROUTES.analyticsExercise(exercise.exerciseId)}
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <div>
+                      <p className="text-sm font-bold">
+                        {exercise.exerciseName}
+                      </p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {exercise.reason}
+                      </p>
+                    </div>
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+                  </a>
                 ))}
               </div>
             ) : (
@@ -197,9 +207,10 @@ export function HomeAnalyticsSection({
               </div>
               <div className="mt-3 space-y-3">
                 {summary.recentPersonalRecords.map((record) => (
-                  <div
+                  <a
                     key={`${record.workoutId ?? ''}-${record.exerciseId}-${record.type}-${record.localDate}`}
-                    className="flex items-baseline justify-between gap-3"
+                    href={APP_ROUTES.analyticsExercise(record.exerciseId)}
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-xl px-2 py-1 transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
                     <div>
                       <p className="text-sm font-bold">{record.exerciseName}</p>
@@ -210,7 +221,8 @@ export function HomeAnalyticsSection({
                     <time className="text-xs text-muted-foreground">
                       {formatShortDate(record.localDate)}
                     </time>
-                  </div>
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+                  </a>
                 ))}
               </div>
             </CardContent>

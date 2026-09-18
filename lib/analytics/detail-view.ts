@@ -7,6 +7,35 @@ import type {
 } from './model';
 
 export type AnalyticsTrendKind = 'e1rm' | 'max_weight' | 'volume';
+export const ALL_BODY_PARTS = 'all';
+
+export function normalizedBodyPart(bodyPart: string) {
+  return bodyPart.trim() && bodyPart !== 'unknown' ? bodyPart.trim() : 'その他';
+}
+
+export function analyticsExerciseIdFromSearch(search: string) {
+  const value = new URLSearchParams(search).get('exerciseId');
+  return value?.trim() || null;
+}
+
+export function analyticsBodyParts(exercises: ExerciseAnalytics[]) {
+  return [
+    ...new Set(
+      exercises.map((exercise) => normalizedBodyPart(exercise.bodyPart)),
+    ),
+  ].sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+export function filterAnalyticsExercises(
+  exercises: ExerciseAnalytics[],
+  bodyPart: string,
+) {
+  return bodyPart === ALL_BODY_PARTS
+    ? exercises
+    : exercises.filter(
+        (exercise) => normalizedBodyPart(exercise.bodyPart) === bodyPart,
+      );
+}
 
 export const ANALYTICS_RANGE_LABELS: Record<AnalyticsRange, string> = {
   '7d': '7日',

@@ -1,5 +1,6 @@
 import type { AnalyticsInsightSummary } from '@/lib/analytics/insights';
 import { Card, CardContent } from '@/components/ui/card';
+import { APP_ROUTES } from '@/lib/routes';
 
 const evidenceLabels: Record<string, string> = {
   weight: '重量',
@@ -28,9 +29,11 @@ function supportingValue(value: number | string, unit?: string) {
 export function InsightsSection({
   summary,
   detailed = false,
+  exerciseLinks = false,
 }: {
   summary: AnalyticsInsightSummary;
   detailed?: boolean;
+  exerciseLinks?: boolean;
 }) {
   return (
     <Card className="rounded-3xl py-5 shadow-none">
@@ -44,41 +47,64 @@ export function InsightsSection({
           </p>
         ) : (
           <ul className="mt-3 space-y-4">
-            {summary.items.map((item) => (
-              <li
-                key={item.id}
-                className="border-l-2 pl-3"
-                style={{
-                  borderColor:
-                    item.priority === 'high'
-                      ? 'var(--color-amber-500)'
-                      : 'var(--primary)',
-                }}
-              >
-                <p className="text-sm font-bold">{item.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {item.message}
-                </p>
-                {detailed && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    {item.supportingData.values
-                      .filter(
-                        (value) => value.unit && value.unit !== 'workouts',
-                      )
-                      .map((value, index) => (
-                        <span
-                          key={`${value.label}-${index}`}
-                          className="mr-3 inline-block"
-                        >
-                          {value.date ? `${value.date} ` : ''}
-                          {evidenceLabels[value.label] ?? value.label}:{' '}
-                          {supportingValue(value.value, value.unit)}
-                        </span>
-                      ))}
-                  </div>
-                )}
-              </li>
-            ))}
+            {summary.items.map((item) => {
+              const content = (
+                <div
+                  className={
+                    exerciseLinks && item.exerciseId
+                      ? 'rounded-r-xl py-2 pr-2 transition hover:bg-muted/60'
+                      : undefined
+                  }
+                >
+                  <p className="text-sm font-bold">{item.title}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {item.message}
+                  </p>
+                  {detailed && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {item.supportingData.values
+                        .filter(
+                          (value) => value.unit && value.unit !== 'workouts',
+                        )
+                        .map((value, index) => (
+                          <span
+                            key={`${value.label}-${index}`}
+                            className="mr-3 inline-block"
+                          >
+                            {value.date ? `${value.date} ` : ''}
+                            {evidenceLabels[value.label] ?? value.label}:{' '}
+                            {supportingValue(value.value, value.unit)}
+                          </span>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              );
+              return (
+                <li
+                  key={item.id}
+                  className="border-l-2 pl-3"
+                  style={{
+                    borderColor:
+                      item.priority === 'high'
+                        ? 'var(--color-amber-500)'
+                        : 'var(--primary)',
+                  }}
+                >
+                  {exerciseLinks && item.exerciseId ? (
+                    <a
+                      className="block min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      href={APP_ROUTES.analyticsExercise(item.exerciseId)}
+                      aria-label={`${item.exerciseName ?? item.title}の詳細分析を見る`}
+                    >
+                      {content}
+                    </a>
+                  ) : (
+                    content
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>

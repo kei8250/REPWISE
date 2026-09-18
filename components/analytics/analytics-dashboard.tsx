@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   CalendarDays,
+  ChevronRight,
   Dumbbell,
   RefreshCw,
   Target,
@@ -22,6 +23,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ANALYTICS_RANGE_LABELS,
+  ALL_BODY_PARTS,
+  analyticsBodyParts,
+  analyticsExerciseIdFromSearch,
+  filterAnalyticsExercises,
   formatKilograms,
   formatPersonalRecordValue,
   formatPreviousPersonalRecordValue,
@@ -173,9 +178,13 @@ export function AnalyticsDataView({
   trendKind: AnalyticsTrendKind;
   onTrendKindChange: (kind: AnalyticsTrendKind) => void;
 }) {
+  const [bodyPartFilter, setBodyPartFilter] = useState(ALL_BODY_PARTS);
+
   if (analytics.workouts.completedWorkoutCount === 0) return <EmptyAnalytics />;
 
   const exercises = sortExercisesByRecent(analytics.exercises);
+  const bodyParts = analyticsBodyParts(exercises);
+  const statusExercises = filterAnalyticsExercises(exercises, bodyPartFilter);
   const selectedExercise = selectAnalyticsExercise(
     analytics,
     selectedExerciseId,
@@ -499,11 +508,43 @@ export function AnalyticsDataView({
             <h2 id="status-list-title" className="text-lg font-black">
               種目ごとの現在状態
             </h2>
+            <div
+              className="mt-3 flex flex-wrap gap-2"
+              aria-label="部位で絞り込む"
+            >
+              {[ALL_BODY_PARTS, ...bodyParts].map((bodyPart) => (
+                <button
+                  key={bodyPart}
+                  type="button"
+                  aria-pressed={bodyPartFilter === bodyPart}
+                  onClick={() => setBodyPartFilter(bodyPart)}
+                  className="min-h-11 shrink-0 rounded-full border px-4 text-sm font-bold text-muted-foreground transition aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+                >
+                  {bodyPart === ALL_BODY_PARTS ? 'すべて' : bodyPart}
+                </button>
+              ))}
+            </div>
             <div className="mt-4 divide-y">
-              {exercises.map((exercise) => (
-                <div
+              {statusExercises.map((exercise) => (
+                <button
                   key={exercise.exerciseId}
-                  className="grid gap-2 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center"
+                  type="button"
+                  aria-pressed={
+                    selectedExercise?.exerciseId === exercise.exerciseId
+                  }
+                  aria-label={`${exercise.exerciseName}の分析を表示`}
+                  onClick={() => {
+                    onSelectExercise(exercise.exerciseId);
+                    requestAnimationFrame(() => {
+                      document
+                        .getElementById('exercise-overview-title')
+                        ?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'start',
+                        });
+                    });
+                  }}
+                  className="grid min-h-16 w-full gap-2 rounded-xl px-2 py-4 text-left transition first:mt-0 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary aria-pressed:bg-primary/[0.06] sm:grid-cols-[1fr_auto_auto] sm:items-center"
                 >
                   <div>
                     <p className="text-sm font-black">
@@ -525,7 +566,8 @@ export function AnalyticsDataView({
                       {stagnationStatusLabel(exercise.stagnation.status)}
                     </span>
                   </div>
-                </div>
+                  <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
+                </button>
               ))}
             </div>
           </CardContent>
@@ -548,6 +590,7 @@ export function AnalyticsDashboard() {
   const [retryAttempt, setRetryAttempt] = useState(0);
   const forceNextRequest = useRef(false);
   const requestSequence = useRef(0);
+  const initialExerciseHandled = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -558,11 +601,18 @@ export function AnalyticsDashboard() {
       (data) => {
         if (!mounted || requestSequence.current !== requestId) return;
         setState({ status: 'success', data });
-        setSelectedExerciseId((current) =>
-          data.exercises.some((exercise) => exercise.exerciseId === current)
-            ? current
-            : (sortExercisesByRecent(data.exercises)[0]?.exerciseId ?? null),
-        );
+        setSelectedExerciseId((current) => {
+          const requestedExerciseId = initialExerciseHandled.current
+            ? null
+            : analyticsExerciseIdFromSearch(window.location.search);
+          initialExerciseHandled.current = true;
+          const candidate = requestedExerciseId ?? current;
+          return data.exercises.some(
+            (exercise) => exercise.exerciseId === candidate,
+          )
+            ? candidate
+            : (sortExercisesByRecent(data.exercises)[0]?.exerciseId ?? null);
+        });
       },
       () => {
         if (mounted && requestSequence.current === requestId) {
@@ -579,6 +629,13 @@ export function AnalyticsDashboard() {
     () => ANALYTICS_RANGE_LABELS[range],
     [range],
   );
+
+  const handleSelectExercise = (exerciseId: string) => {
+    setSelectedExerciseId(exerciseId);
+    const url = new URL(window.location.href);
+    url.searchParams.set('exerciseId', exerciseId);
+    window.history.replaceState(window.history.state, '', url);
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-7 lg:p-10">
@@ -628,7 +685,7 @@ export function AnalyticsDashboard() {
         <AnalyticsDataView
           analytics={state.data}
           selectedExerciseId={selectedExerciseId}
-          onSelectExercise={setSelectedExerciseId}
+          onSelectExercise={handleSelectExercise}
           trendKind={trendKind}
           onTrendKindChange={setTrendKind}
         />

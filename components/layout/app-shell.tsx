@@ -1,14 +1,19 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Activity, Dumbbell, History, Home } from 'lucide-react';
+import { Activity, BarChart3, Dumbbell, History, Home } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { APP_ROUTES, PRIMARY_NAVIGATION } from '@/lib/routes';
+import {
+  APP_ROUTES,
+  DESKTOP_NAVIGATION,
+  PRIMARY_NAVIGATION,
+} from '@/lib/routes';
 
 const navigationIcons = {
   home: Home,
   newWorkout: Dumbbell,
   history: History,
+  analytics: BarChart3,
 } as const;
 
 export function AppShell({
@@ -47,7 +52,7 @@ export function AppShell({
             </span>
           </a>
           <nav className="mt-10 space-y-1" aria-label="メインナビゲーション">
-            {PRIMARY_NAVIGATION.map(({ key, href, label }) => {
+            {DESKTOP_NAVIGATION.map(({ key, href, label }) => {
               const Icon = navigationIcons[key];
               return (
                 <a

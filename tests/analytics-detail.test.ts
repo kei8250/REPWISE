@@ -14,6 +14,10 @@ import {
   createAnalyticsDetailCache,
 } from '@/lib/analytics/detail-cache';
 import {
+  ALL_BODY_PARTS,
+  analyticsBodyParts,
+  analyticsExerciseIdFromSearch,
+  filterAnalyticsExercises,
   getAnalyticsTrend,
   selectAnalyticsExercise,
   sortExercisesByRecent,
@@ -187,6 +191,39 @@ describe('Phase 4C detailed analytics', () => {
     expect(selectAnalyticsExercise(analytics, 'bench')?.exerciseName).toBe(
       'ベンチプレス',
     );
+  });
+
+  it('deep linkのexercise IDを読み取り、有効IDは該当種目・無効IDは安全な既定種目を選ぶ', () => {
+    const analytics = snapshot();
+    const validId = analyticsExerciseIdFromSearch('?exerciseId=bench');
+    const invalidId = analyticsExerciseIdFromSearch('?exerciseId=missing');
+    expect(selectAnalyticsExercise(analytics, validId)?.exerciseId).toBe(
+      'bench',
+    );
+    expect(selectAnalyticsExercise(analytics, invalidId)?.exerciseId).toBe(
+      'squat',
+    );
+  });
+
+  it('現在状態は実データの部位で絞り込み、unknownをその他として扱う', () => {
+    const exercises = [
+      ...snapshot().exercises,
+      exercise('unknown', '部位未設定種目', '2026-09-29', {
+        bodyPart: 'unknown',
+      }),
+    ];
+    expect(analyticsBodyParts(exercises)).toEqual(['その他', '脚', '胸']);
+    expect(
+      filterAnalyticsExercises(exercises, '胸').map((item) => item.exerciseId),
+    ).toEqual(['bench']);
+    expect(filterAnalyticsExercises(exercises, ALL_BODY_PARTS)).toHaveLength(3);
+  });
+
+  it('現在状態の各行をexercise切替ボタンとして表示する', () => {
+    const markup = renderData();
+    expect(markup).toContain('aria-label="ベンチプレスの分析を表示"');
+    expect(markup).toContain('aria-label="部位で絞り込む"');
+    expect(markup).toContain('>すべて</button>');
   });
 
   it('D: e1RM trendはAPIの既存値を再計算せず使用する', () => {

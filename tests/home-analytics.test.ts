@@ -324,4 +324,38 @@ describe('Phase 4B Home analytics summary', () => {
     await cache.load();
     expect(fetch).toHaveBeenCalledTimes(3);
   });
+
+  it('Homeの最近のPRと停滞種目からexercise ID付き分析へ遷移できる', () => {
+    const markup = renderToStaticMarkup(
+      createElement(HomeAnalyticsSection, {
+        state: {
+          status: 'success',
+          data: summary({
+            stagnatingExercises: [
+              {
+                exerciseId: 'bench press',
+                exerciseName: 'ベンチプレス',
+                reason: '直近3回で明確な伸びが見られません',
+              },
+            ],
+            recentPersonalRecords: [
+              {
+                workoutId: 'workout-1',
+                exerciseId: 'bench press',
+                exerciseName: 'ベンチプレス',
+                localDate: '2026-09-30',
+                type: 'weight',
+                value: 102_500,
+                loadGrams: 102_500,
+              },
+            ],
+          }),
+        },
+        onRetry: vi.fn(),
+      }),
+    );
+    expect(
+      markup.match(/href="\/analytics\?exerciseId=bench%20press"/g),
+    ).toHaveLength(2);
+  });
 });

@@ -5,6 +5,8 @@ export const APP_ROUTES = {
   newWorkout: '/workouts/new',
   history: '/history',
   analytics: '/analytics',
+  analyticsExercise: (exerciseId: string) =>
+    `/analytics?exerciseId=${encodeURIComponent(exerciseId)}`,
   workoutDetail: (id: string) => `/workouts/${encodeURIComponent(id)}`,
   activeWorkout: (id: string) => `/workouts/active/${encodeURIComponent(id)}`,
 } as const;
@@ -13,6 +15,11 @@ export const PRIMARY_NAVIGATION = [
   { key: 'home', href: APP_ROUTES.home, label: 'ホーム' },
   { key: 'newWorkout', href: APP_ROUTES.newWorkout, label: '記録する' },
   { key: 'history', href: APP_ROUTES.history, label: '履歴' },
+] as const;
+
+export const DESKTOP_NAVIGATION = [
+  ...PRIMARY_NAVIGATION,
+  { key: 'analytics', href: APP_ROUTES.analytics, label: '詳細分析' },
 ] as const;
 
 export function workoutRoute(id: string, status: WorkoutStatus) {

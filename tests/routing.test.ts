@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { HomeV2 } from '@/components/home-v2';
 import {
   APP_ROUTES,
+  DESKTOP_NAVIGATION,
   navigateTo,
   PRIMARY_NAVIGATION,
   workoutRoute,
@@ -59,6 +60,20 @@ describe('Phase 1A routing', () => {
         expect(navigation).toContain(item.label);
       }
     }
+  });
+
+  it('PCサイドバーだけに詳細分析への通常リンクを追加する', () => {
+    const markup = renderToStaticMarkup(
+      createElement(AppShell, null, createElement('span', null, 'content')),
+    );
+    const navigations = markup.match(/<nav[\s\S]*?<\/nav>/g) ?? [];
+    expect(DESKTOP_NAVIGATION.at(-1)).toEqual({
+      key: 'analytics',
+      href: '/analytics',
+      label: '詳細分析',
+    });
+    expect(navigations[0]).toContain('href="/analytics"');
+    expect(navigations[1]).not.toContain('href="/analytics"');
   });
 
   it('performs a full-page navigation to the supplied destination', () => {

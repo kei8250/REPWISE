@@ -19,14 +19,15 @@ export type ExerciseProgressionLoadState =
   | { status: 'error'; recommendation: null; error: string };
 
 type StoredResult = {
-  exerciseId: string;
+  contextKey: string;
   state: ExerciseProgressionLoadState;
 };
 
-export function useExerciseProgression(exerciseId: string | null) {
+export function useExerciseProgression(exerciseId: string | null, beforeDate?: string, beforeStartedAt?: string, excludeWorkoutId?: string) {
+  const contextKey = `${exerciseId ?? ''}:${beforeDate ?? ''}:${beforeStartedAt ?? ''}:${excludeWorkoutId ?? ''}`;
   const cache = useMemo<ProgressionRequestCache>(
-    () => createProgressionRequestCache(getExerciseProgressionRecommendation),
-    [],
+    () => createProgressionRequestCache(id => getExerciseProgressionRecommendation(id, undefined, { beforeDate, beforeStartedAt, excludeWorkoutId })),
+    [beforeDate, beforeStartedAt, excludeWorkoutId],
   );
   const [stored, setStored] = useState<StoredResult | null>(null);
   const [retryRevision, setRetryRevision] = useState(0);
@@ -39,14 +40,14 @@ export function useExerciseProgression(exerciseId: string | null) {
       .then((recommendation) => {
         if (!active) return;
         setStored({
-          exerciseId,
+          contextKey,
           state: { status: 'success', recommendation, error: null },
         });
       })
       .catch((cause) => {
         if (!active) return;
         setStored({
-          exerciseId,
+          contextKey,
           state: {
             status: 'error',
             recommendation: null,
@@ -60,7 +61,13 @@ export function useExerciseProgression(exerciseId: string | null) {
     return () => {
       active = false;
     };
-  }, [cache, exerciseId, retryRevision]);
+  }, [cache, exerciseId, retryRevision, contextKey]);
+
+  useEffect(() => {
+    const refresh = () => { if (exerciseId) { cache.invalidate(exerciseId); setStored(null); setRetryRevision(current => current + 1); } };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [cache, exerciseId]);
 
   const retry = useCallback(() => {
     if (!exerciseId) return;
@@ -71,7 +78,7 @@ export function useExerciseProgression(exerciseId: string | null) {
 
   const state: ExerciseProgressionLoadState = !exerciseId
     ? { status: 'idle', recommendation: null, error: null }
-    : stored?.exerciseId === exerciseId
+    : stored?.contextKey === contextKey
       ? stored.state
       : { status: 'loading', recommendation: null, error: null };
   return { state, retry };

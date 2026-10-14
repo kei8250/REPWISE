@@ -1,3 +1,4 @@
+import { getExerciseProgressionRecommendation } from '@/lib/progression/server-store';
 import { updateExerciseMaster } from '@/lib/workouts/exercise-settings-store';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
@@ -390,4 +391,88 @@ describe('exercise settings persistence', () => {
         .get('ex-bench-press'),
     ).toMatchObject({ name: input.name });
   });
+});
+
+describe('reference selection and exercise history filters', () => {
+  it('finds per-slot valid references beyond the first ten sessions without losing recent notes', async () => {
+    insertWorkout(sqlite, { id: 'valid-old', localDate: '2026-09-01' });
+    for (let day = 2; day <= 14; day++) {
+      const id = `incomplete-${day}`;
+      insertWorkout(sqlite, { id, localDate: `2026-09-${String(day).padStart(2, '0')}` });
+      sqlite.prepare("UPDATE workout_set SET status = 'planned', actual_load_grams = NULL, actual_reps = NULL, memo = '未完了メモ' WHERE workout_exercise_id = ?").run(`${id}-exercise`);
+      sqlite.prepare("UPDATE workout_exercise SET note = '種目メモ保持' WHERE id = ?").run(`${id}-exercise`);
+    }
+    const page = await getExerciseHistory(db, 'ex-bench-press', { beforeDate: '2026-09-15' });
+    expect(page.items).toHaveLength(10);
+    expect(page.items[0].workoutId).toBe('incomplete-14');
+    expect(page.items[0].note).toBe('種目メモ保持');
+    expect(page.items[0].sets[0].memo).toBe('未完了メモ');
+    expect(page.references?.map(item => item.workoutId)).toEqual(['valid-old']);
+    const next = await getExerciseHistory(db, 'ex-bench-press', { offset: 10 });
+    expect(next.items).toHaveLength(4);
+  });
+
+  it('uses date/time bounds and preserves positions, skipped/warmup/deleted exclusion', async () => {
+    insertWorkout(sqlite, { id: 'old', localDate: '2026-09-01' });
+    insertWorkout(sqlite, { id: 'recent', localDate: '2026-09-02' });
+    insertWorkout(sqlite, { id: 'future', localDate: '2026-10-01' });
+    sqlite.prepare("UPDATE workout_set SET status = 'skipped' WHERE id = 'recent-exercise-set-0'").run();
+    sqlite.prepare("UPDATE workout_set SET set_type = 'warmup' WHERE id = 'recent-exercise-set-1'").run();
+    sqlite.prepare("UPDATE workout_set SET deleted_at = ? WHERE id = 'recent-exercise-set-2'").run(timestamp);
+    const page = await getExerciseHistory(db, 'ex-bench-press', { beforeDate: '2026-09-10', excludeWorkoutId: 'future' });
+    expect(page.references?.map(item => item.workoutId)).toEqual(['old']);
+    expect(page.items[0].sets.map(set => set.position)).toEqual([0, 1]);
+  });
+
+  it('filters by historical/current exercise name and body part before pagination with literal wildcard input', async () => {
+    insertWorkout(sqlite, { id: 'bench', localDate: '2026-09-01' });
+    insertWorkout(sqlite, { id: 'row', exerciseId: 'ex-seated-row', localDate: '2026-09-02' });
+    sqlite.prepare("UPDATE exercise_master SET name = '新しいプレス', body_part = '胸' WHERE id = 'ex-bench-press'").run();
+    expect((await listWorkouts(db, 'completed', 8, { exerciseName: '新しい', bodyPart: '胸' })).map(item => item.id)).toEqual(['bench']);
+    expect((await listWorkouts(db, 'completed', 8, { exerciseName: 'bench', bodyPart: '胸' })).map(item => item.id)).toEqual(['bench']);
+    expect(await listWorkouts(db, 'completed', 8, { exerciseName: '%', bodyPart: '胸' })).toEqual([]);
+    expect(await listWorkouts(db, 'completed', 8, { exerciseName: 'bench', bodyPart: '背中' })).toEqual([]);
+    expect(await listWorkouts(db, 'completed', 8, { exerciseName: 'bench', offset: 1 })).toEqual([]);
+  });
+});
+
+
+describe('recommendation reference validity', () => {
+  it('skips empty completed sessions while preserving the strict count and mixed-load rules', async () => {
+    insertWorkout(sqlite, { id: 'valid', localDate: '2026-09-01' });
+    insertWorkout(sqlite, { id: 'empty', localDate: '2026-09-02' });
+    sqlite.prepare("UPDATE workout_set SET status = 'planned', actual_load_grams = NULL, actual_reps = NULL WHERE workout_exercise_id = 'empty-exercise'").run();
+    const result = await getExerciseProgressionRecommendation(db, 'ex-bench-press');
+    expect(result.performance?.workoutId).toBe('valid');
+    expect(result.decision.status).not.toBe('insufficient_data');
+    sqlite.prepare("UPDATE workout_set SET status = 'completed', actual_load_grams = 100000, actual_reps = 10 WHERE id = 'empty-exercise-set-0'").run();
+    const partial = await getExerciseProgressionRecommendation(db, 'ex-bench-press');
+    expect(partial.performance?.workoutId).toBe('empty');
+    expect(partial.decision.reasonCode).toBe('incomplete_working_set');
+    const before = await getExerciseProgressionRecommendation(db, 'ex-bench-press', {}, { beforeDate: '2026-09-01', excludeWorkoutId: 'empty' });
+    expect(before.performance?.workoutId).toBe('valid');
+  });
+});
+
+
+it('同日の参考実績は開始時刻より前だけを使い、現在の記録を除外する', async () => {
+  insertWorkout(sqlite, { id: 'morning', localDate: '2026-09-02' });
+  insertWorkout(sqlite, { id: 'evening', localDate: '2026-09-02' });
+  sqlite.prepare("UPDATE workout SET started_at = '2026-09-02T09:00:00Z', ended_at = '2026-09-02T10:00:00Z' WHERE id = 'morning'").run();
+  sqlite.prepare("UPDATE workout SET started_at = '2026-09-02T17:00:00Z', ended_at = '2026-09-02T18:00:00Z' WHERE id = 'evening'").run();
+  const options = { beforeDate: '2026-09-02', beforeStartedAt: '2026-09-02T12:00:00Z', excludeWorkoutId: 'current' };
+  expect((await getExerciseProgressionRecommendation(db, 'ex-bench-press', {}, options)).performance?.workoutId).toBe('morning');
+  expect((await getExerciseHistory(db, 'ex-bench-press', options)).references?.map(item => item.workoutId)).toEqual(['morning']);
+});
+
+
+it('未実施として終了した種目のメモは履歴に残し、参考実績からは除外する', async () => {
+  insertWorkout(sqlite, { id: 'valid', localDate: '2026-09-01' });
+  insertWorkout(sqlite, { id: 'not-performed', localDate: '2026-09-02', exerciseStatus: 'skipped' });
+  sqlite.prepare("UPDATE workout_exercise SET note = '痛みがあるため今日は中止' WHERE id = 'not-performed-exercise'").run();
+  sqlite.prepare("UPDATE workout_set SET status = 'skipped', actual_load_grams = NULL, actual_reps = NULL, memo = '次回フォーム確認' WHERE workout_exercise_id = 'not-performed-exercise'").run();
+  const page = await getExerciseHistory(db, 'ex-bench-press');
+  expect(page.items[0]).toMatchObject({ workoutId: 'not-performed', note: '痛みがあるため今日は中止' });
+  expect(page.items[0].sets[0].memo).toBe('次回フォーム確認');
+  expect(page.references?.map(item => item.workoutId)).toEqual(['valid']);
 });

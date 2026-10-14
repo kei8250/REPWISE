@@ -45,7 +45,10 @@ export async function getExerciseHistory(
     'we.exercise_id = ?',
     "w.status = 'completed'",
     'w.deleted_at IS NULL',
-    "we.status <> 'skipped'",
+    `(we.status <> 'skipped' OR LENGTH(TRIM(we.note)) > 0 OR EXISTS (
+      SELECT 1 FROM workout_set note_set WHERE note_set.workout_exercise_id = we.id
+        AND note_set.deleted_at IS NULL AND LENGTH(TRIM(note_set.memo)) > 0
+    ))`,
   ];
   const values: (string | number)[] = ['default', exerciseId];
   if (options.beforeDate && options.beforeStartedAt) {
@@ -78,16 +81,38 @@ export async function getExerciseHistory(
     .bind(...values, limit + 1, options.offset ?? 0)
     .all<HistoryRow>();
   const rows = result.results.slice(0, limit);
-  if (!rows.length) return { items: [], hasMore: false };
-  const sets = await db
-    .prepare(`
-    SELECT * FROM workout_set
-    WHERE workout_exercise_id IN (${rows.map(() => '?').join(', ')}) AND deleted_at IS NULL
-    ORDER BY position, created_at, id
-  `)
-    .bind(...rows.map((row) => row.workout_exercise_id))
-    .all<SetRow>();
-  const items: ExerciseHistoryEntry[] = rows.map((row) => ({
+  // Search all eligible history for each slot, independently of pagination.
+  const referenceResult = (options.offset ?? 0) === 0 ? await db.prepare(`
+    SELECT * FROM (
+      SELECT w.id AS workout_id, we.id AS workout_exercise_id,
+        w.name AS workout_name, w.local_date, w.overall_note,
+        we.exercise_name_snapshot, we.note, w.ended_at AS sort_ended_at, w.started_at AS sort_started_at,
+        ROW_NUMBER() OVER (PARTITION BY ws.position ORDER BY w.local_date DESC,
+          julianday(w.ended_at) DESC, julianday(w.started_at) DESC, w.id DESC, we.position) AS slot_rank
+      FROM workout_exercise we JOIN workout w ON w.id = we.workout_id
+      JOIN workout_set ws ON ws.workout_exercise_id = we.id
+      WHERE ${clauses.join(' AND ')} AND we.status <> 'skipped' AND ws.deleted_at IS NULL
+        AND ws.status = 'completed' AND ws.set_type = 'working'
+        AND ws.actual_load_grams >= 0 AND ws.actual_reps > 0
+        AND ws.actual_load_grams = CAST(ws.actual_load_grams AS INTEGER)
+        AND ws.actual_reps = CAST(ws.actual_reps AS INTEGER)
+    ) WHERE slot_rank = 1
+    ORDER BY local_date DESC, julianday(sort_ended_at) DESC, julianday(sort_started_at) DESC, workout_id DESC
+  `).bind(...values).all<HistoryRow>() : null;
+  const referenceRows = referenceResult?.results ?? [];
+  const allRows = [...new Map([...rows, ...referenceRows].map(row => [row.workout_exercise_id, row])).values()];
+  if (!allRows.length) return { items: [], hasMore: false };
+  // D1 limits bound parameters per statement; reference sessions may exceed a page.
+  const setPages = await Promise.all(Array.from({ length: Math.ceil(allRows.length / 80) }, (_, index) => {
+    const chunk = allRows.slice(index * 80, (index + 1) * 80);
+    return db.prepare(`
+      SELECT * FROM workout_set
+      WHERE workout_exercise_id IN (${chunk.map(() => '?').join(', ')}) AND deleted_at IS NULL
+      ORDER BY position, created_at, id
+    `).bind(...chunk.map(row => row.workout_exercise_id)).all<SetRow>();
+  }));
+  const sets = setPages.flatMap(page => page.results);
+  const entries: ExerciseHistoryEntry[] = allRows.map((row) => ({
     workoutId: row.workout_id,
     workoutExerciseId: row.workout_exercise_id,
     workoutName: row.workout_name,
@@ -95,7 +120,7 @@ export async function getExerciseHistory(
     exerciseName: row.exercise_name_snapshot,
     note: row.note,
     overallNote: row.overall_note,
-    sets: sets.results
+    sets: sets
       .filter((set) => set.workout_exercise_id === row.workout_exercise_id)
       .map((set) => ({
         id: set.id,
@@ -113,5 +138,9 @@ export async function getExerciseHistory(
         updatedAt: set.updated_at,
       })),
   }));
-  return { items, hasMore: result.results.length > limit };
+  const byId = new Map(entries.map(entry => [entry.workoutExerciseId, entry]));
+  return { items: rows.map(row => byId.get(row.workout_exercise_id)!),
+    hasMore: result.results.length > limit,
+    ...(referenceResult ? { references: [...new Set(referenceRows.map(row => row.workout_exercise_id))].map(id => byId.get(id)!) } : {}),
+  };
 }

@@ -10,10 +10,11 @@ import type {
   WorkoutExercise as WorkoutExerciseType,
   WorkoutSet,
 } from '@/lib/workouts/types';
+import { ExerciseSettingsReference } from './exercise-settings-reference';
 import { WorkoutSetRow } from './workout-set-row';
 import { ExerciseProgression } from './exercise-progression';
 import { useExerciseHistory } from '@/hooks/use-exercise-history';
-import { previousSetAt } from '@/lib/workouts/history';
+import { referenceAt } from '@/lib/workouts/history';
 import { ExerciseHistory } from './exercise-history';
 
 export function WorkoutExercise({
@@ -48,12 +49,18 @@ export function WorkoutExercise({
     true,
     startedAt,
   );
-  const updateSet = (next: WorkoutSet) =>
+  const updateSet = (next: WorkoutSet) => {
+    const justCompleted = next.status === 'completed' && exercise.sets.find(set => set.id === next.id)?.status !== 'completed';
     onChange({
       ...exercise,
       sets: exercise.sets.map((set) => (set.id === next.id ? next : set)),
       updatedAt: new Date().toISOString(),
     });
+    if (justCompleted) {
+      const following = exercise.sets.find(set => set.id !== next.id && set.status !== 'completed' && set.status !== 'skipped');
+      if (following) requestAnimationFrame(() => document.getElementById(`workout-set-${following.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
+  };
   const deleteSet = (id: string) =>
     onChange({
       ...exercise,
@@ -71,6 +78,7 @@ export function WorkoutExercise({
       updatedAt: new Date().toISOString(),
     });
   };
+  const nextSet = exercise.sets.find(set => set.status !== 'completed' && set.status !== 'skipped');
   const completed = exercise.status === 'completed';
   return (
     <section className="space-y-3">
@@ -99,7 +107,8 @@ export function WorkoutExercise({
           <Button
             type="button"
             variant="outline"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             disabled={isFirst}
             aria-label="種目を前へ移動"
             onClick={() => onMove(-1)}
@@ -109,7 +118,8 @@ export function WorkoutExercise({
           <Button
             type="button"
             variant="outline"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             disabled={isLast}
             aria-label="種目を後ろへ移動"
             onClick={() => onMove(1)}
@@ -119,7 +129,8 @@ export function WorkoutExercise({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             aria-label="種目を削除"
             onClick={onDelete}
           >
@@ -127,15 +138,19 @@ export function WorkoutExercise({
           </Button>
         </div>
       </div>
+      {nextSet && <a className="flex min-h-11 items-center justify-center rounded-xl bg-primary/10 px-3 text-sm font-bold text-primary" href={`#workout-set-${nextSet.id}`}>次に取り組む SET {nextSet.position + 1} へ</a>}
       <ExerciseProgression
         exercise={exercise}
         state={progression}
         onRetry={onRetryProgression}
+        onChange={onChange}
       />
+      <ExerciseSettingsReference key={exercise.exerciseId} exerciseId={exercise.exerciseId} />
       <ExerciseHistory history={history} />
       <div className="space-y-3">
         {exercise.sets.map((set, index) => {
-          const previous = previousSetAt(history.items[0], set.position);
+          const reference = referenceAt(history.references ?? history.items, set.position);
+          const previous = reference?.set;
           return (
             <WorkoutSetRow
               key={set.id}
@@ -147,20 +162,12 @@ export function WorkoutExercise({
               isFirst={index === 0}
               isLast={index === exercise.sets.length - 1}
               onMove={(direction) => moveSet(index, direction)}
-              previousRecords={history.items
-                .slice(0, 2)
-                .flatMap((entry, previousIndex) => {
-                  const previous = previousSetAt(entry, set.position);
-                  return previous
-                    ? [
-                        {
-                          localDate: entry.localDate,
-                          label: previousIndex === 0 ? '前回' : '前々回',
-                          set: previous,
-                        },
-                      ]
-                    : [];
-                })}
+              previousRecords={reference ? [{
+                localDate: reference.entry.localDate, label: '直近の有効実績',
+                set: reference.set, exerciseNote: reference.entry.note,
+              }] : []}
+              recentRecord={history.items[0]}
+              isNext={set.id === exercise.sets.find(item => item.status !== 'completed' && item.status !== 'skipped')?.id}
               historyStatus={history.status}
               comparison={compareWorkingSet(
                 {

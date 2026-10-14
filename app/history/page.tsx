@@ -5,7 +5,7 @@ import { isLocalDate } from '@/lib/workouts/history';
 export default async function HistoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; month?: string; status?: string }>;
+  searchParams: Promise<{ date?: string; month?: string; status?: string; exerciseName?: string; bodyPart?: string }>;
 }) {
   const query = await searchParams;
   const date = query.date && isLocalDate(query.date) ? query.date : undefined;
@@ -17,7 +17,7 @@ export default async function HistoryPage({
         <p className="text-xs font-semibold text-primary">WORKOUT HISTORY</p>
         <h1 className="mt-1 text-2xl font-black">トレーニング履歴</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          月・日付から、見たいセットとメモへ
+          日付・種目・部位から、見たいセットとメモへ
         </p>
         {query.date && !date && (
           <p role="alert" className="mt-2 text-sm text-destructive">
@@ -26,6 +26,8 @@ export default async function HistoryPage({
         )}
       </header>
       <HistoryBrowser
+        initialExerciseName={query.exerciseName?.slice(0, 80)}
+        initialBodyPart={query.bodyPart?.slice(0, 40)}
         initialDate={date}
         initialMonth={month}
         initialAll={query.month === 'all' && !date}

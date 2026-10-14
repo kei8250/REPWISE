@@ -99,9 +99,14 @@ export function createExerciseMaster(
 export function getExerciseProgressionRecommendation(
   exerciseId: string,
   fetcher?: FetchLike,
+  options: { beforeDate?: string; beforeStartedAt?: string; excludeWorkoutId?: string } = {},
 ) {
+  const query = new URLSearchParams();
+  if (options.beforeDate) query.set('beforeDate', options.beforeDate);
+  if (options.beforeStartedAt) query.set('beforeStartedAt', options.beforeStartedAt);
+  if (options.excludeWorkoutId) query.set('excludeWorkoutId', options.excludeWorkoutId);
   return request<ExerciseProgressionRecommendation>(
-    `/api/v2/exercises/${encodeURIComponent(exerciseId)}/progression`,
+    `/api/v2/exercises/${encodeURIComponent(exerciseId)}/progression${query.size ? `?${query}` : ''}`,
     {},
     fetcher,
   );
@@ -130,6 +135,8 @@ export function listWorkouts(
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
   if (filter.offset) query.set('offset', String(filter.offset));
+  if (filter.exerciseName) query.set('exerciseName', filter.exerciseName);
+  if (filter.bodyPart) query.set('bodyPart', filter.bodyPart);
   return request<WorkoutSummary[]>(`/api/v2/workouts?${query}`, {}, fetcher);
 }
 

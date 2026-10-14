@@ -17,12 +17,18 @@ export function HistoryBrowser({
   initialMonth,
   initialStatus = 'completed',
   initialAll = false,
+  initialExerciseName = '',
+  initialBodyPart = '',
 }: {
   initialDate?: string;
   initialMonth?: string;
   initialStatus?: 'active' | 'completed';
   initialAll?: boolean;
+  initialExerciseName?: string;
+  initialBodyPart?: string;
 }) {
+  const [exerciseName, setExerciseName] = useState(initialExerciseName);
+  const [bodyPart, setBodyPart] = useState(initialBodyPart);
   const today = useLocalToday();
   const [selectedMonth, setMonth] = useState(
     initialMonth ?? initialDate?.slice(0, 7),
@@ -54,6 +60,8 @@ export function HistoryBrowser({
       status: next.status,
     });
     if (next.date) query.set('date', next.date);
+    if (exerciseName) query.set('exerciseName', exerciseName);
+    if (bodyPart) query.set('bodyPart', bodyPart);
     window.history.replaceState(null, '', `${APP_ROUTES.history}?${query}`);
   };
   const chooseMonth = (value: string) => {
@@ -184,6 +192,28 @@ export function HistoryBrowser({
             )}
           </div>
         </div>
+        <form className="space-y-3" onSubmit={event => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          const rawName = data.get('exerciseName');
+          const rawPart = data.get('bodyPart');
+          const name = typeof rawName === 'string' ? rawName.trim() : '';
+          const part = typeof rawPart === 'string' ? rawPart : '';
+          setExerciseName(name); setBodyPart(part);
+          const url = new URL(window.location.href);
+          if (name) url.searchParams.set('exerciseName', name); else url.searchParams.delete('exerciseName');
+          if (part) url.searchParams.set('bodyPart', part); else url.searchParams.delete('bodyPart');
+          window.history.replaceState(null, '', url);
+        }}>
+          <label className="block text-xs font-bold" htmlFor="history-exercise">種目名（過去の名前・現在の名前）</label>
+          <Input id="history-exercise" name="exerciseName" defaultValue={exerciseName} maxLength={80} placeholder="例：ベンチプレス" className="h-11 text-base" />
+          <label className="block text-xs font-bold" htmlFor="history-body-part">部位（現在の種目設定）</label>
+          <select id="history-body-part" name="bodyPart" defaultValue={bodyPart} className="h-11 w-full rounded-xl border bg-background px-3 text-base">
+            {['', '胸', '背中', '肩', '腕', '脚', '体幹', 'その他'].map(part => <option key={part} value={part}>{part || 'すべての部位'}</option>)}
+          </select>
+          <Button type="submit" className="min-h-11 w-full">種目・部位で絞り込む</Button>
+          {(exerciseName || bodyPart) && <p className="text-xs">適用中：{exerciseName || 'すべての種目'} · {bodyPart || 'すべての部位'}。解除は入力を空・すべてにして再検索。</p>}
+        </form>
         <details
           onToggle={(event) => setCalendarOpen(event.currentTarget.open)}
         >
@@ -208,7 +238,9 @@ export function HistoryBrowser({
           {label} · {status === 'completed' ? '完了済み' : '入力途中'}
         </h2>
         <WorkoutSummaryList
-          key={`${status}:${period.from ?? 'all'}:${period.to ?? 'all'}`}
+          key={`${status}:${period.from ?? 'all'}:${period.to ?? 'all'}:${exerciseName}:${bodyPart}`}
+          exerciseName={exerciseName}
+          bodyPart={bodyPart}
           status={status}
           from={period.from}
           to={period.to}

@@ -28,12 +28,16 @@ export function WorkoutSummaryList({
   localDate,
   from,
   to,
+  exerciseName,
+  bodyPart,
 }: {
   status?: 'active' | 'completed';
   emptyMessage: string;
   localDate?: string;
   from?: string;
   to?: string;
+  exerciseName?: string;
+  bodyPart?: string;
 }) {
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +63,7 @@ export function WorkoutSummaryList({
     void loadVisibleWorkouts(status, pageSize, {
       from: localDate ?? from,
       to: localDate ?? to,
+      exerciseName, bodyPart,
     })
       .then((loaded) => {
         setItems(loaded.items);
@@ -78,6 +83,7 @@ export function WorkoutSummaryList({
     void loadVisibleWorkouts(status, pageSize, {
       from: localDate ?? from,
       to: localDate ?? to,
+      exerciseName, bodyPart,
     })
       .then((loaded) => {
         if (alive) {
@@ -101,7 +107,7 @@ export function WorkoutSummaryList({
     return () => {
       alive = false;
     };
-  }, [status, localDate, from, to]);
+  }, [status, localDate, from, to, exerciseName, bodyPart]);
   const loadMore = async () => {
     if (loadingMore) return;
     setLoadingMore(true);
@@ -115,6 +121,7 @@ export function WorkoutSummaryList({
         const loaded = await loadVisibleWorkouts(status, pageSize, {
           from: localDate ?? from,
           to: localDate ?? to,
+      exerciseName, bodyPart,
           offset,
         });
         combined = [

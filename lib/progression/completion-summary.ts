@@ -73,12 +73,15 @@ export function formatWorkingSetPerformance(
 
   const valid = sets.every(
     (set) =>
+      set.status === 'completed' &&
       Number.isInteger(set.actualLoadGrams) &&
       (set.actualLoadGrams ?? 0) > 0 &&
       Number.isInteger(set.actualReps) &&
       (set.actualReps ?? 0) > 0,
   );
-  if (!valid) return '実績入力が不足しています';
+  if (!valid) return sets.map(set =>
+    `SET ${set.position + 1}: ${set.actualLoadGrams === null ? '—' : formatProgressionWeight(set.actualLoadGrams)}×${set.actualReps ?? '—'}${set.status !== 'completed' ? '（未完了・スキップ）' : ''}`
+  ).join(' / ');
 
   const loads = new Set(sets.map((set) => set.actualLoadGrams));
   if (loads.size === 1) {

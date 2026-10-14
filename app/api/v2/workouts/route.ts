@@ -13,12 +13,15 @@ export async function GET(request: Request) {
     if (status && !['draft', 'active', 'completed', 'abandoned'].includes(status)) return Response.json({ error: 'statusが正しくありません' }, { status: 400 });
     const from = url.searchParams.get('from') ?? undefined;
     const to = url.searchParams.get('to') ?? undefined;
+    const exerciseName = url.searchParams.get('exerciseName')?.trim() || undefined;
+    const bodyPart = url.searchParams.get('bodyPart') || undefined;
+    if ((exerciseName && exerciseName.length > 80) || (bodyPart && bodyPart.length > 40)) return Response.json({ error: '絞り込みの指定が長すぎます' }, { status: 400 });
     const offset = Number(url.searchParams.get('offset') ?? 0);
     if ((from && !isLocalDate(from)) || (to && !isLocalDate(to)) ||
         (from && to && from > to) || !Number.isSafeInteger(offset) || offset < 0) {
       return Response.json({ error: '日付またはページの指定が正しくありません' }, { status: 400 });
     }
-    return Response.json(await listWorkouts(getD1(), status, limit, { from, to, offset }));
+    return Response.json(await listWorkouts(getD1(), status, limit, { from, to, offset, exerciseName, bodyPart }));
   } catch (error) { return apiError(error); }
 }
 

@@ -1,11 +1,12 @@
 import { listWorkouts } from './api-client';
 import {
   readLocalWorkoutSources,
+  getExerciseMasterCacheRecord,
   workoutToSummary,
   type LocalWorkoutDraft,
 } from './local-drafts';
 import type { WorkoutHistoryFilter } from './history';
-import type { Workout, WorkoutMutation, WorkoutSummary } from './types';
+import type { ExerciseMaster, Workout, WorkoutMutation, WorkoutSummary } from './types';
 
 export function mergeVisibleWorkouts(
   server: WorkoutSummary[],
@@ -14,6 +15,7 @@ export function mergeVisibleWorkouts(
   status?: Workout['status'],
   filter: WorkoutHistoryFilter = {},
   serverAvailable = true,
+  masters: ExerciseMaster[] = [],
 ) {
   const pending = new Set(mutations.map((item) => item.workoutId));
   const items = new Map(server.map((item) => [item.id, item]));
@@ -32,7 +34,13 @@ export function mergeVisibleWorkouts(
       draft.draftStatus === 'deleted' ||
       (status && workout.status !== status) ||
       (filter.from && workout.localDate < filter.from) ||
-      (filter.to && workout.localDate > filter.to)
+      (filter.to && workout.localDate > filter.to) ||
+      ((filter.exerciseName || filter.bodyPart) && !workout.exercises.some(exercise => {
+        const master = masters.find(item => item.id === exercise.exerciseId);
+        const name = filter.exerciseName?.toLocaleLowerCase() ?? '';
+        return (!name || exercise.exerciseNameSnapshot.toLocaleLowerCase().includes(name) || master?.name.toLocaleLowerCase().includes(name)) &&
+          (!filter.bodyPart || master?.bodyPart === filter.bodyPart);
+      }))
     )
       continue;
     if (
@@ -65,6 +73,7 @@ export async function loadVisibleWorkouts(
     drafts: [],
     mutations: [],
   }));
+  const masters = (await getExerciseMasterCacheRecord().catch(() => null))?.exercises ?? [];
   try {
     const server = await listWorkouts(status, limit + 1, undefined, filter);
     return {
@@ -74,6 +83,8 @@ export async function loadVisibleWorkouts(
         local.mutations,
         status,
         filter,
+        true,
+        masters,
       ),
       serverCount: Math.min(server.length, limit),
       hasMore: server.length > limit,
@@ -87,6 +98,7 @@ export async function loadVisibleWorkouts(
       status,
       filter,
       false,
+      masters,
     );
     if (!items.length) throw error;
     return { items, serverCount: 0, hasMore: false, serverAvailable: false };

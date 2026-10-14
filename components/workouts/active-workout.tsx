@@ -262,7 +262,11 @@ export function ActiveWorkout({ id }: { id: string }) {
           </div>
         ) : (
           <WorkoutExercise
+            key={selected.id}
             exercise={selected}
+            workoutId={workout.id}
+            localDate={workout.localDate}
+            startedAt={workout.startedAt}
             progression={progression.state}
             onRetryProgression={progression.retry}
             isFirst={selected.position === 0}

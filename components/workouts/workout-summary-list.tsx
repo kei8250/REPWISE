@@ -25,18 +25,24 @@ function formatDate(value: string) {
 export function WorkoutSummaryList({
   status,
   emptyMessage,
+  localDate,
 }: {
   status?: 'active' | 'completed';
   emptyMessage: string;
+  localDate?: string;
 }) {
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState(false);
+  const pageSize = 30;
   const [error, setError] = useState<string | null>(null);
   const load = () => {
     setLoading(true);
     setError(null);
-    void listWorkouts(status)
-      .then(setItems)
+    void listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate })
+      .then((loaded) => { setItems(loaded.slice(0, pageSize)); setHasMore(loaded.length > pageSize); })
       .catch((cause) =>
         setError(
           cause instanceof Error ? cause.message : '履歴を読み込めませんでした',
@@ -46,9 +52,9 @@ export function WorkoutSummaryList({
   };
   useEffect(() => {
     let alive = true;
-    void listWorkouts(status)
+    void listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate })
       .then((loaded) => {
-        if (alive) setItems(loaded);
+        if (alive) { setItems(loaded.slice(0, pageSize)); setHasMore(loaded.length > pageSize); }
       })
       .catch((cause) => {
         if (alive)
@@ -64,7 +70,18 @@ export function WorkoutSummaryList({
     return () => {
       alive = false;
     };
-  }, [status]);
+  }, [status, localDate]);
+  const loadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setMoreError(false);
+    try {
+      const loaded = await listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate, offset: items.length });
+      setItems((previous) => [...previous, ...loaded.slice(0, pageSize)]);
+      setHasMore(loaded.length > pageSize);
+    } catch { setMoreError(true); }
+    finally { setLoadingMore(false); }
+  };
   if (loading)
     return (
       <div className="grid min-h-44 place-items-center">
@@ -105,7 +122,7 @@ export function WorkoutSummaryList({
                 )}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-black">{item.name}</p>
+                <a href={href} className="block truncate font-black hover:text-primary">{item.name}</a>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatDate(item.localDate)} · {item.exerciseCount}種目 ·{' '}
                   {item.completedSetCount}/{item.setCount}セット完了
@@ -125,6 +142,8 @@ export function WorkoutSummaryList({
           </Card>
         );
       })}
+      {moreError && <p role="alert" className="text-sm text-destructive">古い履歴を取得できませんでした。再度お試しください。</p>}
+      {hasMore && <Button type="button" variant="outline" className="w-full" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? '読み込み中…' : 'さらに以前の履歴を見る'}</Button>}
     </div>
   );
 }

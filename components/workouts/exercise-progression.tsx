@@ -36,14 +36,14 @@ export function ExerciseProgression({
     return (
       <div className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
         <LoaderCircle className="size-3.5 animate-spin" />
-        前回記録を確認中
+        おすすめ目標を確認中
       </div>
     );
   }
   if (state.status === 'error') {
     return (
       <div className="flex items-center justify-between gap-2 rounded-xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-        <span>前回記録を取得できませんでした</span>
+        <span>おすすめ目標を取得できませんでした</span>
         <Button
           type="button"
           variant="ghost"
@@ -62,7 +62,7 @@ export function ExerciseProgression({
     <aside className="grid gap-2 rounded-2xl border bg-card p-3 sm:grid-cols-2">
       <div className="min-w-0">
         <p className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
-          <History className="size-3.5" /> 前回実績
+          <History className="size-3.5" /> 目標の参考実績
           {summary.previous && (
             <span className="font-normal">
               {shortDate(summary.previous.localDate)}
@@ -77,7 +77,7 @@ export function ExerciseProgression({
             </span>
           </div>
         ) : (
-          <p className="mt-1 text-sm font-semibold">前回記録なし</p>
+          <p className="mt-1 text-sm font-semibold">参考記録なし</p>
         )}
       </div>
       <div className="min-w-0 border-t pt-2 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-3">

@@ -1,3 +1,4 @@
+import { defaultWorkoutName } from './history';
 import type {
   CreateWorkoutInput,
   ExerciseMaster,
@@ -53,7 +54,9 @@ export function copyWorkoutForToday(
 
   return {
     id: idFactory(),
-    name: source.name,
+    name: source.name === defaultWorkoutName(source.localDate) || source.name === '今日のワークアウト'
+      ? defaultWorkoutName(localDate)
+      : source.name,
     status: 'active',
     localDate,
     timezone,

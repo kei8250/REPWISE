@@ -1,3 +1,4 @@
+import type { ExerciseHistoryPage, WorkoutHistoryFilter } from './history';
 import type {
   CreateExerciseMasterInput,
   CreateWorkoutInput,
@@ -115,9 +116,13 @@ export function listWorkouts(
   status?: Workout['status'],
   limit = 30,
   fetcher?: FetchLike,
+  filter: WorkoutHistoryFilter = {},
 ) {
   const query = new URLSearchParams({ limit: String(limit) });
   if (status) query.set('status', status);
+  if (filter.from) query.set('from', filter.from);
+  if (filter.to) query.set('to', filter.to);
+  if (filter.offset) query.set('offset', String(filter.offset));
   return request<WorkoutSummary[]>(`/api/v2/workouts?${query}`, {}, fetcher);
 }
 
@@ -188,6 +193,23 @@ export function syncWorkoutMutation(
   return request<WorkoutMutationResult>(
     '/api/v2/sync',
     { method: 'POST', body: JSON.stringify(mutation) },
+    fetcher,
+  );
+}
+
+export function getExerciseHistory(
+  exerciseId: string,
+  options: { beforeDate?: string; beforeStartedAt?: string; excludeWorkoutId?: string; offset?: number } = {},
+  fetcher?: FetchLike,
+) {
+  const query = new URLSearchParams();
+  if (options.beforeDate) query.set('beforeDate', options.beforeDate);
+  if (options.beforeStartedAt) query.set('beforeStartedAt', options.beforeStartedAt);
+  if (options.excludeWorkoutId) query.set('excludeWorkoutId', options.excludeWorkoutId);
+  if (options.offset) query.set('offset', String(options.offset));
+  return request<ExerciseHistoryPage>(
+    `/api/v2/exercises/${encodeURIComponent(exerciseId)}/history?${query}`,
+    {},
     fetcher,
   );
 }

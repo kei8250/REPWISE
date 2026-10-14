@@ -8,15 +8,15 @@ import { createLocalWorkout } from '@/lib/workouts/draft';
 import { saveWorkoutDraftAndEnqueueMutation } from '@/lib/workouts/local-drafts';
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
-
-function today() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
+import { defaultWorkoutName } from '@/lib/workouts/history';
+import { useLocalToday } from '@/hooks/use-local-today';
 
 export function StartWorkoutForm() {
-  const [name, setName] = useState('今日のワークアウト');
-  const [localDate, setLocalDate] = useState(today);
+  const today = useLocalToday();
+  const [selectedDate, setLocalDate] = useState<string | null>(null);
+  const localDate = selectedDate ?? today;
+  const [customName, setCustomName] = useState<string | null>(null);
+  const name = customName ?? defaultWorkoutName(localDate);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function start(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -25,7 +25,7 @@ export function StartWorkoutForm() {
     setError(null);
     try {
       const workout = createLocalWorkout({
-        name,
+        name: name.trim() || defaultWorkoutName(localDate),
         localDate,
         timezone:
           Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
@@ -48,16 +48,19 @@ export function StartWorkoutForm() {
     >
       <div>
         <label htmlFor="workout-name" className="block text-sm font-bold">
-          ワークアウト名
+          トレーニング名（任意）
         </label>
         <Input
           id="workout-name"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          placeholder={defaultWorkoutName(localDate)}
+          onChange={(event) => setCustomName(event.target.value)}
           maxLength={80}
           className="mt-2 h-11"
-          required
         />
+        <p className="mt-2 text-xs text-muted-foreground">
+          日付の名前のまま開始できます。
+        </p>
       </div>
       <div>
         <label htmlFor="workout-date" className="block text-sm font-bold">

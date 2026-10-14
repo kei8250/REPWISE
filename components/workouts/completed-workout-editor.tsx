@@ -147,6 +147,9 @@ export function CompletedWorkoutEditor({
         <Card key={exercise.id} className="rounded-3xl py-5 shadow-none">
           <CardContent className="px-5">
             <WorkoutExercise
+              workoutId={workout.id}
+              localDate={workout.localDate}
+            startedAt={workout.startedAt}
               exercise={exercise}
               isFirst={index === 0}
               isLast={index === workout.exercises.length - 1}

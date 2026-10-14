@@ -4,10 +4,7 @@ import { ArrowDown, ArrowUp, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { createSet, normalizePositions } from '@/lib/workouts/draft';
-import {
-  compareWorkingSet,
-  getPreviousWorkingSets,
-} from '@/lib/progression/active-workout';
+import { compareWorkingSet } from '@/lib/progression/active-workout';
 import type { ExerciseProgressionLoadState } from '@/hooks/use-exercise-progression';
 import type {
   WorkoutExercise as WorkoutExerciseType,
@@ -15,9 +12,15 @@ import type {
 } from '@/lib/workouts/types';
 import { WorkoutSetRow } from './workout-set-row';
 import { ExerciseProgression } from './exercise-progression';
+import { useExerciseHistory } from '@/hooks/use-exercise-history';
+import { previousSetAt } from '@/lib/workouts/history';
+import { ExerciseHistory } from './exercise-history';
 
 export function WorkoutExercise({
   exercise,
+  workoutId,
+  localDate,
+  startedAt,
   progression = { status: 'idle', recommendation: null, error: null },
   onRetryProgression = () => undefined,
   isFirst,
@@ -27,6 +30,9 @@ export function WorkoutExercise({
   onMove,
 }: {
   exercise: WorkoutExerciseType;
+  workoutId: string;
+  localDate: string;
+  startedAt: string;
   progression?: ExerciseProgressionLoadState;
   onRetryProgression?: () => void;
   isFirst: boolean;
@@ -35,6 +41,13 @@ export function WorkoutExercise({
   onDelete: () => void;
   onMove: (direction: -1 | 1) => void;
 }) {
+  const history = useExerciseHistory(
+    exercise.exerciseId,
+    localDate,
+    workoutId,
+    true,
+    startedAt,
+  );
   const updateSet = (next: WorkoutSet) =>
     onChange({
       ...exercise,
@@ -59,10 +72,6 @@ export function WorkoutExercise({
     });
   };
   const completed = exercise.status === 'completed';
-  const previousSets =
-    progression.status === 'success'
-      ? getPreviousWorkingSets(progression.recommendation)
-      : [];
   return (
     <section className="space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -77,6 +86,14 @@ export function WorkoutExercise({
             {exercise.sets.filter((set) => set.status === 'completed').length} /{' '}
             {exercise.sets.length} セット完了
           </p>
+          <progress
+            aria-label={`${exercise.exerciseNameSnapshot}のセット完了状況`}
+            className="mt-2 h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
+            value={
+              exercise.sets.filter((set) => set.status === 'completed').length
+            }
+            max={Math.max(exercise.sets.length, 1)}
+          />
         </div>
         <div className="flex gap-1">
           <Button
@@ -115,21 +132,46 @@ export function WorkoutExercise({
         state={progression}
         onRetry={onRetryProgression}
       />
+      <ExerciseHistory history={history} />
       <div className="space-y-3">
-        {exercise.sets.map((set, index) => (
-          <WorkoutSetRow
-            key={set.id}
-            set={set}
-            number={index + 1}
-            onChange={updateSet}
-            canDelete={exercise.sets.length > 1}
-            onDelete={() => deleteSet(set.id)}
-            isFirst={index === 0}
-            isLast={index === exercise.sets.length - 1}
-            onMove={(direction) => moveSet(index, direction)}
-            comparison={compareWorkingSet(set, previousSets[index] ?? null)}
-          />
-        ))}
+        {exercise.sets.map((set, index) => {
+          const previous = previousSetAt(history.items[0], set.position);
+          return (
+            <WorkoutSetRow
+              key={set.id}
+              set={set}
+              number={index + 1}
+              onChange={updateSet}
+              canDelete={exercise.sets.length > 1}
+              onDelete={() => deleteSet(set.id)}
+              isFirst={index === 0}
+              isLast={index === exercise.sets.length - 1}
+              onMove={(direction) => moveSet(index, direction)}
+              previousRecords={history.items
+                .slice(0, 2)
+                .flatMap((entry, previousIndex) => {
+                  const previous = previousSetAt(entry, set.position);
+                  return previous
+                    ? [
+                        {
+                          localDate: entry.localDate,
+                          label: previousIndex === 0 ? '前回' : '前々回',
+                          set: previous,
+                        },
+                      ]
+                    : [];
+                })}
+              historyStatus={history.status}
+              comparison={compareWorkingSet(
+                {
+                  ...set,
+                  status: set.status === 'skipped' ? 'skipped' : 'completed',
+                },
+                previous ? { ...previous, deletedAt: null } : null,
+              )}
+            />
+          );
+        })}
       </div>
       <Button
         type="button"

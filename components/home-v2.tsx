@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { WorkoutCalendar } from '@/components/workouts/workout-calendar';
 import { ArrowRight, ChevronRight, Clock3, History } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
@@ -141,6 +142,7 @@ export function HomeV2() {
           </a>
         </div>
       </section>
+      <WorkoutCalendar />
       <div className="grid gap-4 sm:grid-cols-2">
         <Card className="rounded-3xl py-5 shadow-none">
           <CardContent className="px-5">

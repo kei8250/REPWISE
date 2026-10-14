@@ -1,3 +1,4 @@
+import { updateExerciseMaster } from '@/lib/workouts/exercise-settings-store';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -22,6 +23,11 @@ class TestStatement {
   bind(...values: SqlValue[]) {
     this.values = values;
     return this;
+  }
+
+  async run() {
+    const result = this.statement.run(...this.values);
+    return { success: true, meta: { changes: Number(result.changes) } };
   }
 
   async first<T>() {
@@ -323,5 +329,65 @@ describe('workout calendar and exercise history', () => {
         { localDate: '2026-10-16' },
       ).name,
     ).toBe('脚の日');
+  });
+});
+
+describe('exercise settings persistence', () => {
+  it('同じ種目IDの名前と初期値だけを更新し、過去の名前とセットを維持する', async () => {
+    insertWorkout(sqlite, { id: 'before-rename', localDate: '2026-09-01' });
+    const updated = await updateExerciseMaster(db, 'ex-bench-press', {
+      name: 'スミスベンチプレス',
+      bodyPart: '胸',
+      defaultRepMin: 6,
+      defaultRepMax: 10,
+      defaultWorkingSets: 4,
+      defaultIncrementGrams: 1250,
+      defaultRestSeconds: 120,
+    });
+    expect(updated).toMatchObject({
+      id: 'ex-bench-press',
+      name: 'スミスベンチプレス',
+      defaultWorkingSets: 4,
+      defaultIncrementGrams: 1250,
+    });
+    expect(
+      sqlite
+        .prepare(
+          'SELECT exercise_name_snapshot FROM workout_exercise WHERE workout_id = ?',
+        )
+        .get('before-rename'),
+    ).toMatchObject({ exercise_name_snapshot: 'ex-bench-press' });
+    expect(
+      sqlite.prepare('SELECT COUNT(*) AS count FROM workout_set').get(),
+    ).toMatchObject({ count: 3 });
+  });
+  it('他のownerの種目を変更せず、名前重複は明確なエラーにする', async () => {
+    const input = {
+      name: 'テスト用プレス',
+      bodyPart: '胸',
+      defaultRepMin: 8,
+      defaultRepMax: 12,
+      defaultWorkingSets: 3,
+      defaultIncrementGrams: 2500,
+      defaultRestSeconds: 90,
+    };
+    await updateExerciseMaster(db, 'ex-bench-press', input);
+    await expect(
+      updateExerciseMaster(db, 'ex-seated-row', input),
+    ).rejects.toThrow('同じ名前');
+    sqlite
+      .prepare("UPDATE exercise_master SET owner_id = 'other' WHERE id = ?")
+      .run('ex-bench-press');
+    await expect(
+      updateExerciseMaster(db, 'ex-bench-press', {
+        ...input,
+        name: '変更しない',
+      }),
+    ).rejects.toThrow('種目が見つかりません');
+    expect(
+      sqlite
+        .prepare('SELECT name FROM exercise_master WHERE id = ?')
+        .get('ex-bench-press'),
+    ).toMatchObject({ name: input.name });
   });
 });

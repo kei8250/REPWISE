@@ -546,6 +546,18 @@ export async function acknowledgeWorkoutMutation(
   notifyQueueChanged();
 }
 
+export async function readLocalWorkoutSources(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME], 'readonly');
+  const complete = transactionComplete(transaction);
+  const [drafts, mutations] = await Promise.all([
+    requestResult(transaction.objectStore(LOCAL_DRAFT_STORE_NAME).getAll()),
+    requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).getAll()),
+  ]);
+  await complete;
+  return { drafts: drafts.filter(isLocalWorkoutDraft), mutations: mutations.filter(isWorkoutMutation) };
+}
+
 export async function getLocalWorkoutDraft(
   workoutId: string,
   databaseName = LOCAL_DRAFT_DATABASE_NAME,

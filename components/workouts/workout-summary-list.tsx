@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { listWorkouts } from '@/lib/workouts/api-client';
+import { loadVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { workoutRoute } from '@/lib/routes';
 
@@ -36,13 +36,15 @@ export function WorkoutSummaryList({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState(false);
+  const [serverOffset, setServerOffset] = useState(0);
+  const [serverAvailable, setServerAvailable] = useState(true);
   const pageSize = 30;
   const [error, setError] = useState<string | null>(null);
   const load = () => {
     setLoading(true);
     setError(null);
-    void listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate })
-      .then((loaded) => { setItems(loaded.slice(0, pageSize)); setHasMore(loaded.length > pageSize); })
+    void loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate })
+      .then((loaded) => { setItems(loaded.items); setHasMore(loaded.hasMore); setServerOffset(loaded.serverCount); setServerAvailable(loaded.serverAvailable); })
       .catch((cause) =>
         setError(
           cause instanceof Error ? cause.message : '履歴を読み込めませんでした',
@@ -52,9 +54,9 @@ export function WorkoutSummaryList({
   };
   useEffect(() => {
     let alive = true;
-    void listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate })
+    void loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate })
       .then((loaded) => {
-        if (alive) { setItems(loaded.slice(0, pageSize)); setHasMore(loaded.length > pageSize); }
+        if (alive) { setItems(loaded.items); setHasMore(loaded.hasMore); setServerOffset(loaded.serverCount); setServerAvailable(loaded.serverAvailable); }
       })
       .catch((cause) => {
         if (alive)
@@ -76,9 +78,10 @@ export function WorkoutSummaryList({
     setLoadingMore(true);
     setMoreError(false);
     try {
-      const loaded = await listWorkouts(status, pageSize + 1, undefined, { from: localDate, to: localDate, offset: items.length });
-      setItems((previous) => [...previous, ...loaded.slice(0, pageSize)]);
-      setHasMore(loaded.length > pageSize);
+      const loaded = await loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate, offset: serverOffset });
+      setItems((previous) => [...new Map([...previous, ...loaded.items].map((item) => [item.id, item])).values()]);
+      setServerOffset((offset) => offset + loaded.serverCount);
+      setHasMore(loaded.hasMore);
     } catch { setMoreError(true); }
     finally { setLoadingMore(false); }
   };
@@ -106,6 +109,7 @@ export function WorkoutSummaryList({
     );
   return (
     <div className="space-y-3">
+      {!serverAvailable && <p className="text-xs text-muted-foreground">サーバーに接続できないため、端末の保存済み記録を表示しています。</p>}
       {items.map((item) => {
         const active = item.status === 'active';
         const href = workoutRoute(item.id, item.status);
@@ -127,6 +131,7 @@ export function WorkoutSummaryList({
                   {formatDate(item.localDate)} · {item.exerciseCount}種目 ·{' '}
                   {item.completedSetCount}/{item.setCount}セット完了
                 </p>
+                {item.localOnly && <p className="mt-1 text-xs font-bold text-amber-700">{item.pendingSync ? '端末に保存済み・未同期' : '端末の保存済み記録'}</p>}
               </div>
               <a
                 href={href}

@@ -96,7 +96,7 @@ export function queueStateToSaveState(
   if (queue.conflict > 0) return 'conflict';
   if (queue.blocked > 0 || (queue.failed > 0 && !offline)) return 'error';
   if (queue.syncing > 0) return 'saving';
-  if (queue.total > 0) return offline ? 'pending' : 'saving';
+  if (queue.total > 0) return 'pending';
   return 'saved';
 }
 
@@ -178,8 +178,9 @@ async function runSync(
       );
       processed += 1;
     } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : '同期に失敗しました';
+      const message = cause instanceof WorkoutApiError
+        ? `${cause.message}（HTTP ${cause.status}）${cause.issues.length ? '\n' + cause.issues.map((issue) => `${issue.path}: ${issue.message}`).join('\n') : ''}`
+        : cause instanceof Error ? cause.message : '同期に失敗しました';
       const syncStatus: WorkoutMutationSyncStatus =
         isWorkoutVersionConflictError(cause)
           ? 'conflict'

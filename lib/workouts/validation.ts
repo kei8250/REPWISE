@@ -1,5 +1,6 @@
 import type {
   CreateExerciseMasterInput,
+  UpdateExerciseMasterInput,
   CreateWorkoutInput,
   Workout,
   WorkoutMutationInput,
@@ -194,6 +195,24 @@ export function validateExerciseMasterInput(
     name,
     bodyPart,
   };
+  if (issues.length) throw new WorkoutValidationError(issues);
+  return result;
+}
+
+export function validateExerciseMasterUpdate(value: unknown): UpdateExerciseMasterInput {
+  const input = record(value);
+  const base = validateExerciseMasterInput(input);
+  const issues: ValidationIssue[] = [];
+  const result = {
+    name: base.name,
+    bodyPart: base.bodyPart,
+    defaultRepMin: integer(input.defaultRepMin, 'defaultRepMin', issues, 1, 999, true),
+    defaultRepMax: integer(input.defaultRepMax, 'defaultRepMax', issues, 1, 999, true),
+    defaultWorkingSets: integer(input.defaultWorkingSets, 'defaultWorkingSets', issues, 1, 30, true),
+    defaultIncrementGrams: integer(input.defaultIncrementGrams, 'defaultIncrementGrams', issues, 1, 100000, true),
+    defaultRestSeconds: integer(input.defaultRestSeconds, 'defaultRestSeconds', issues, 0, 3600, true),
+  };
+  if (result.defaultRepMin !== null && result.defaultRepMax !== null && result.defaultRepMin > result.defaultRepMax) issues.push({ path: 'defaultRepMax', message: 'rep上限は下限以上にしてください' });
   if (issues.length) throw new WorkoutValidationError(issues);
   return result;
 }

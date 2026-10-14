@@ -1,5 +1,7 @@
 'use client';
 
+import { loadVisibleWorkouts } from '@/lib/workouts/visible-workouts';
+
 import { useEffect, useState } from 'react';
 import { WorkoutCalendar } from '@/components/workouts/workout-calendar';
 import { ArrowRight, ChevronRight, Clock3, History } from 'lucide-react';
@@ -78,7 +80,7 @@ export function HomeV2() {
 
   useEffect(() => {
     let mounted = true;
-    void loadHomeCompletedWorkout(() => listWorkouts('completed', 1)).then(
+    void loadHomeCompletedWorkout(async () => (await loadVisibleWorkouts('completed', 1)).items).then(
       (state) => {
         if (mounted) setCompletedState(state);
       },
@@ -157,6 +159,7 @@ export function HomeV2() {
                   {recent.localDate} · {recent.exerciseCount}種目 ·{' '}
                   {recent.completedSetCount}セット
                 </p>
+                {recent.localOnly && <p className="mt-2 text-xs font-bold text-amber-700">{recent.pendingSync ? 'この端末に保存済み・未同期' : '端末の保存済み記録を表示中'}</p>}
                 <a
                   href={workoutRoute(recent.id, recent.status)}
                   className="mt-4 inline-flex items-center text-sm font-bold text-primary"

@@ -1,0 +1,497 @@
+'use client';
+
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { listExerciseMasters } from '@/lib/workouts/api-client';
+import { updateCachedExerciseMaster } from '@/lib/workouts/exercise-master-cache';
+import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
+import { getSyncIdleMs, setSyncIdleMs } from '@/lib/workouts/sync-timing';
+import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
+import type {
+  ExerciseMaster,
+  UpdateExerciseMasterInput,
+} from '@/lib/workouts/types';
+import { workoutRoute } from '@/lib/routes';
+
+function subscribeSettings(update: () => void) {
+  window.addEventListener('storage', update);
+  window.addEventListener('repwise-settings-change', update);
+  return () => {
+    window.removeEventListener('storage', update);
+    window.removeEventListener('repwise-settings-change', update);
+  };
+}
+
+export function SettingsDashboard() {
+  const idleMs = useSyncExternalStore(
+    subscribeSettings,
+    getSyncIdleMs,
+    () => 3000,
+  );
+  const [items, setItems] = useState<ExerciseMaster[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [masterError, setMasterError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [local, setLocal] = useState<Awaited<
+    ReturnType<typeof readLocalWorkoutSources>
+  > | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const refreshLocal = useCallback(
+    () =>
+      readLocalWorkoutSources().then(setLocal, (cause: unknown) =>
+        setLocalError(
+          cause instanceof Error
+            ? cause.message
+            : '端末の保存状態を取得できませんでした',
+        ),
+      ),
+    [],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    const update = () => {
+      void readLocalWorkoutSources().then(
+        (data) => {
+          if (alive) {
+            setLocal(data);
+            setLocalError(null);
+          }
+        },
+        (cause: unknown) => {
+          if (alive)
+            setLocalError(
+              cause instanceof Error
+                ? cause.message
+                : '保存状態を取得できませんでした',
+            );
+        },
+      );
+    };
+    update();
+    window.addEventListener('repwise-sync-queue-change', update);
+    void listExerciseMasters()
+      .then(
+        (data) => {
+          if (alive) setItems(data);
+        },
+        (cause: unknown) => {
+          if (alive)
+            setMasterError(
+              cause instanceof Error
+                ? cause.message
+                : '種目を取得できませんでした',
+            );
+        },
+      )
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+      window.removeEventListener('repwise-sync-queue-change', update);
+    };
+  }, []);
+
+  const retryCatalog = async () => {
+    setLoading(true);
+    setMasterError(null);
+    try {
+      setItems(await listExerciseMasters());
+    } catch (cause) {
+      setMasterError(
+        cause instanceof Error ? cause.message : '種目を取得できませんでした',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+  const retrySync = async (id: string) => {
+    setBusy(id);
+    setNotice(null);
+    try {
+      const result = await syncPendingWorkoutMutations(id, { manual: true });
+      setNotice(
+        result.failed
+          ? `同期できませんでした：${result.failed.lastError ?? '内容を確認してください'}`
+          : result.remaining
+            ? '残りの記録は自動同期を待っています。'
+            : '同期が完了しました。',
+      );
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error ? cause.message : '再試行できませんでした',
+      );
+    } finally {
+      await refreshLocal();
+      setBusy(null);
+    }
+  };
+  const exportLocal = async () => {
+    try {
+      const data = await readLocalWorkoutSources();
+      const blob = new Blob(
+        [
+          JSON.stringify(
+            { exportedAt: new Date().toISOString(), ...data },
+            null,
+            2,
+          ),
+        ],
+        { type: 'application/json' },
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `repwise-records-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('この端末の記録を書き出しました。');
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error ? cause.message : '書き出せませんでした',
+      );
+    }
+  };
+  const exercise = items.find((item) => item.id === selected);
+  const queuedIds = [
+    ...new Set(local?.mutations.map((item) => item.workoutId) ?? []),
+  ];
+  return (
+    <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-7">
+      <section className="rounded-3xl border bg-card p-5">
+        <h2 className="text-lg font-black">保存と同期</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          入力内容はすぐにこの端末へ保存し、入力が止まってからまとめて同期します。
+        </p>
+        <label htmlFor="sync-idle" className="mt-4 block text-sm font-bold">
+          自動同期のタイミング
+        </label>
+        <select
+          id="sync-idle"
+          value={idleMs}
+          className="mt-2 h-11 w-full rounded-lg border bg-background px-3"
+          onChange={(event) => {
+            try {
+              setSyncIdleMs(Number(event.target.value));
+              setNotice('同期タイミングを保存しました。');
+            } catch {
+              setNotice('設定を保存できませんでした。');
+            }
+          }}
+        >
+          <option value={3000}>入力停止から3秒後（おすすめ）</option>
+          <option value={10000}>入力停止から10秒後</option>
+        </select>
+        {localError ? (
+          <p role="alert" className="mt-3 text-sm text-destructive">
+            {localError}
+          </p>
+        ) : !local ? (
+          <p className="mt-3 text-sm">保存状態を確認中…</p>
+        ) : (
+          <p className="mt-3 text-sm">
+            端末の保存済み記録：
+            {
+              local.drafts.filter((item) => item.draftStatus !== 'deleted')
+                .length
+            }
+            件 · 未同期：{queuedIds.length}件
+          </p>
+        )}
+        <div className="mt-4 space-y-3">
+          {queuedIds.map((id) => {
+            const draft = local?.drafts.find((item) => item.workoutId === id);
+            const queue =
+              local?.mutations
+                .filter((item) => item.workoutId === id)
+                .sort((a, b) => a.sequence - b.sequence) ?? [];
+            const head = queue[0];
+            const label =
+              head?.syncStatus === 'conflict'
+                ? '別の変更と競合しています'
+                : head?.syncStatus === 'blocked'
+                  ? '同期を停止中・内容を確認してください'
+                  : head?.syncStatus === 'failed'
+                    ? '同期失敗・記録は端末に保存済み'
+                    : head?.syncStatus === 'syncing'
+                      ? '同期中'
+                      : '端末に保存済み・同期待ち';
+            return (
+              <div key={id} className="rounded-xl bg-muted/50 p-3">
+                <p className="font-bold">
+                  {draft?.workout.name ?? 'トレーニング記録'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {label} · {queue.length}件の変更
+                </p>
+                {head?.lastError && (
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm text-destructive">
+                    {head.lastError}
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap gap-3">
+                  {draft && (
+                    <a
+                      className="self-center text-sm font-bold text-primary"
+                      href={workoutRoute(id, draft.workout.status)}
+                    >
+                      記録を確認
+                    </a>
+                  )}
+                  {head?.syncStatus !== 'conflict' && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy !== null || head?.syncStatus === 'syncing'}
+                      onClick={() => void retrySync(id)}
+                    >
+                      {busy === id ? '再試行中…' : '同期を再試行'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 w-full"
+          onClick={() => void exportLocal()}
+        >
+          この端末の記録を書き出す
+        </Button>
+        <p className="mt-2 text-xs text-muted-foreground">
+          同期前の記録はこの端末・このサイトに保存されています。書き出したファイルにはトレーニング記録とメモが含まれます。
+        </p>
+        {notice && (
+          <output className="mt-3 block text-sm font-bold">{notice}</output>
+        )}
+      </section>
+      <section className="rounded-3xl border bg-card p-5">
+        <h2 className="text-lg font-black">種目の設定</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          種目名・部位・初期セット数・回数の目安を変更できます。過去の記録はその時の名前を残し、新しく追加する種目へ反映します。
+        </p>
+        {loading ? (
+          <p className="mt-4 text-sm">種目を読み込み中…</p>
+        ) : masterError ? (
+          <div className="mt-4">
+            <p role="alert" className="text-sm text-destructive">
+              {masterError}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={() => void retryCatalog()}
+            >
+              再試行
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Input
+              aria-label="設定する種目を検索"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="種目名で検索"
+              className="mt-4"
+            />
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+              {items
+                .filter((item) =>
+                  item.name
+                    .toLocaleLowerCase('ja-JP')
+                    .includes(query.toLocaleLowerCase('ja-JP')),
+                )
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-pressed={selected === item.id}
+                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left text-sm ${selected === item.id ? 'border-primary bg-primary/5' : ''}`}
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <span className="font-bold">{item.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {item.bodyPart}
+                    </span>
+                  </button>
+                ))}
+              {!items.length && (
+                <p className="text-sm text-muted-foreground">
+                  種目は記録画面から追加できます。
+                </p>
+              )}
+            </div>
+            {exercise && (
+              <ExerciseSettingsEditor
+                key={exercise.id}
+                exercise={exercise}
+                onSaved={(updated) =>
+                  setItems((previous) =>
+                    previous.map((item) =>
+                      item.id === updated.id ? updated : item,
+                    ),
+                  )
+                }
+              />
+            )}
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ExerciseSettingsEditor({
+  exercise,
+  onSaved,
+}: {
+  exercise: ExerciseMaster;
+  onSaved: (exercise: ExerciseMaster) => void;
+}) {
+  const [value, setValue] = useState<UpdateExerciseMasterInput>(exercise);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const save = async (event: React.SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await updateCachedExerciseMaster(exercise.id, value);
+      setValue(updated);
+      onSaved(updated);
+      setMessage('種目の設定を保存しました。');
+    } catch (cause) {
+      setMessage(
+        cause instanceof Error ? cause.message : '保存できませんでした',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form
+      className="mt-5 space-y-4 border-t pt-5"
+      onSubmit={(event) => void save(event)}
+    >
+      <div>
+        <label htmlFor="exercise-setting-name" className="text-sm font-bold">
+          種目名
+        </label>
+        <Input
+          id="exercise-setting-name"
+          value={value.name}
+          maxLength={80}
+          required
+          onChange={(event) => setValue({ ...value, name: event.target.value })}
+          className="mt-1"
+        />
+      </div>
+      <div>
+        <label htmlFor="exercise-setting-part" className="text-sm font-bold">
+          部位
+        </label>
+        <select
+          id="exercise-setting-part"
+          value={value.bodyPart}
+          className="mt-1 h-10 w-full rounded-lg border bg-background px-3"
+          onChange={(event) =>
+            setValue({ ...value, bodyPart: event.target.value })
+          }
+        >
+          {['胸', '背中', '脚', '肩', '腕', '体幹', 'その他'].map((part) => (
+            <option key={part}>{part}</option>
+          ))}
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {(
+          [
+            {
+              key: 'defaultWorkingSets',
+              label: '初期セット数',
+              min: 1,
+              max: 30,
+            },
+            { key: 'defaultRepMin', label: 'rep下限', min: 1, max: 999 },
+            { key: 'defaultRepMax', label: 'rep上限', min: 1, max: 999 },
+            {
+              key: 'defaultRestSeconds',
+              label: '休憩の目安（秒）',
+              min: 0,
+              max: 3600,
+            },
+          ] as const
+        ).map((field) => (
+          <div key={field.key}>
+            <label
+              htmlFor={`setting-${field.key}`}
+              className="text-sm font-bold"
+            >
+              {field.label}
+            </label>
+            <Input
+              id={`setting-${field.key}`}
+              type="number"
+              min={field.min}
+              max={field.max}
+              value={value[field.key] ?? ''}
+              onChange={(event) =>
+                setValue({
+                  ...value,
+                  [field.key]:
+                    event.target.value === ''
+                      ? null
+                      : Number(event.target.value),
+                })
+              }
+              className="mt-1"
+            />
+          </div>
+        ))}
+        <div>
+          <label htmlFor="setting-increment" className="text-sm font-bold">
+            増量の目安（kg）
+          </label>
+          <Input
+            id="setting-increment"
+            type="number"
+            min="0.001"
+            max="100"
+            step="0.001"
+            value={
+              value.defaultIncrementGrams === null
+                ? ''
+                : value.defaultIncrementGrams / 1000
+            }
+            onChange={(event) =>
+              setValue({
+                ...value,
+                defaultIncrementGrams:
+                  event.target.value === ''
+                    ? null
+                    : Math.round(Number(event.target.value) * 1000),
+              })
+            }
+            className="mt-1"
+          />
+        </div>
+      </div>
+      <Button type="submit" className="w-full" disabled={saving}>
+        {saving ? '保存中…' : '種目の設定を保存'}
+      </Button>
+      {message && (
+        <output className="block text-sm font-bold">{message}</output>
+      )}
+    </form>
+  );
+}

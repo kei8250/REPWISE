@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { listWorkoutMutations } from '@/lib/workouts/local-drafts';
-import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
+import { syncAutomatically } from '@/lib/workouts/sync-timing';
 
 export function SyncRecovery() {
   useEffect(() => {
@@ -13,7 +13,7 @@ export function SyncRecovery() {
       const workoutIds = [...new Set(queued.map((item) => item.workoutId))];
       await Promise.all(
         workoutIds.map((workoutId) =>
-          syncPendingWorkoutMutations(workoutId).catch(() => undefined),
+          syncAutomatically(workoutId).catch(() => undefined),
         ),
       );
     };

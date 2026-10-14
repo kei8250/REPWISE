@@ -143,6 +143,7 @@ async function getExerciseMaster(
 export async function getLatestCompletedExercisePerformance(
   db: D1Database,
   exerciseId: string,
+  options: { validOnly?: boolean; beforeDate?: string; beforeStartedAt?: string; excludeWorkoutId?: string } = {},
 ): Promise<ProgressionExercisePerformance | null> {
   const exercise = await db
     .prepare(
@@ -159,11 +160,22 @@ export async function getLatestCompletedExercisePerformance(
          AND w.owner_id = ?
          AND w.status = 'completed'
          AND w.deleted_at IS NULL
-       ORDER BY w.local_date DESC, w.ended_at DESC, w.started_at DESC,
-                we.position DESC
+         ${options.validOnly ? `AND EXISTS (SELECT 1 FROM workout_set rs WHERE rs.workout_exercise_id = we.id
+           AND rs.deleted_at IS NULL AND rs.status = 'completed' AND rs.set_type = 'working'
+           AND rs.actual_load_grams > 0 AND rs.actual_reps > 0
+           AND rs.actual_load_grams = CAST(rs.actual_load_grams AS INTEGER)
+           AND rs.actual_reps = CAST(rs.actual_reps AS INTEGER))` : ''}
+         ${options.beforeDate ? 'AND w.local_date <= ?' : ''}
+         ${options.beforeDate && options.beforeStartedAt ? 'AND (w.local_date < ? OR julianday(COALESCE(w.ended_at, w.started_at)) < julianday(?))' : ''}
+         ${options.excludeWorkoutId ? 'AND w.id <> ?' : ''}
+       ORDER BY w.local_date DESC, julianday(w.ended_at) DESC, julianday(w.started_at) DESC,
+                w.id DESC, we.position DESC
        LIMIT 1`,
     )
-    .bind(exerciseId, ownerId)
+    .bind(exerciseId, ownerId,
+      ...(options.beforeDate ? [options.beforeDate] : []),
+      ...(options.beforeDate && options.beforeStartedAt ? [options.beforeDate, options.beforeStartedAt] : []),
+      ...(options.excludeWorkoutId ? [options.excludeWorkoutId] : []))
     .first<LatestExerciseRow>();
   if (!exercise) return null;
 
@@ -205,10 +217,11 @@ export async function getExerciseProgressionRecommendation(
   db: D1Database,
   exerciseId: string,
   override: ProgressionProfileOverride = {},
+  options: { beforeDate?: string; beforeStartedAt?: string; excludeWorkoutId?: string } = {},
 ): Promise<ExerciseProgressionRecommendation> {
   const [exercise, performance] = await Promise.all([
     getExerciseMaster(db, exerciseId),
-    getLatestCompletedExercisePerformance(db, exerciseId),
+    getLatestCompletedExercisePerformance(db, exerciseId, { ...options, validOnly: true }),
   ]);
   if (!exercise) throw new WorkoutNotFoundError('種目が見つかりません');
   const profile = resolveProgressionProfile(exercise, override);

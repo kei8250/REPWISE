@@ -211,6 +211,16 @@ export async function listWorkouts(
   if (status) { clauses.push('AND w.status = ?'); values.push(status); }
   if (filter.from) { clauses.push('AND w.local_date >= ?'); values.push(filter.from); }
   if (filter.to) { clauses.push('AND w.local_date <= ?'); values.push(filter.to); }
+  if (filter.exerciseName || filter.bodyPart) {
+    const matches: string[] = [];
+    if (filter.exerciseName) {
+      matches.push("(he.exercise_name_snapshot LIKE ? ESCAPE '!' OR em.name LIKE ? ESCAPE '!')");
+      const pattern = `%${filter.exerciseName.replace(/[!%_]/g, char => `!${char}`)}%`;
+      values.push(pattern, pattern);
+    }
+    if (filter.bodyPart) { matches.push('em.body_part = ?'); values.push(filter.bodyPart); }
+    clauses.push(`AND EXISTS (SELECT 1 FROM workout_exercise he JOIN exercise_master em ON em.id = he.exercise_id AND em.owner_id = w.owner_id WHERE he.workout_id = w.id AND ${matches.join(' AND ')})`);
+  }
   const statement = db.prepare(`
     SELECT w.id, w.name, w.status, w.local_date, w.started_at, w.ended_at,
            COUNT(DISTINCT we.id) AS exercise_count,

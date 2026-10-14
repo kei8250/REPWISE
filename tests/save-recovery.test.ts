@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSet } from '@/lib/workouts/draft';
 import { createLocalWorkout } from '@/lib/workouts/draft';
 import { listWorkouts } from '@/lib/workouts/api-client';
 import {
@@ -280,4 +281,20 @@ it('入力エラーをHTTP番号・項目名付きで保持して同期を停止
   expect((await readLocalWorkoutSources()).drafts[0].workout).toMatchObject({
     id: active.id,
   });
+});
+
+
+it('同期待ちの履歴も同じ種目の名前・部位で絞り込み、別種目の部位とは混合しない', () => {
+  const workout = completed();
+  workout.exercises = [
+    { id: 'bench', exerciseId: 'bench', position: 0, status: 'completed', exerciseNameSnapshot: '旧ベンチ名', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [createSet(0)] },
+    { id: 'row', exerciseId: 'row', position: 1, status: 'completed', exerciseNameSnapshot: 'ロウ', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [] },
+  ];
+  const masters = [
+    { id: 'bench', name: '新ベンチ名', normalizedName: '新ベンチ名', bodyPart: '胸', measurementType: 'weight_reps' as const, defaultRepMin: 8, defaultRepMax: 12, defaultWorkingSets: 3, defaultIncrementGrams: 2500, defaultRestSeconds: 90 },
+    { id: 'row', name: 'ロウ', normalizedName: 'ロウ', bodyPart: '背中', measurementType: 'weight_reps' as const, defaultRepMin: 8, defaultRepMax: 12, defaultWorkingSets: 3, defaultIncrementGrams: 2500, defaultRestSeconds: 90 },
+  ];
+  expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '新ベンチ', bodyPart: '胸' }, true, masters)).toHaveLength(1);
+  expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '旧ベンチ', bodyPart: '背中' }, true, masters)).toHaveLength(0);
+  expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '旧ベンチ' }, false)).toHaveLength(1);
 });

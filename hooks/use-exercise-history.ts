@@ -19,6 +19,7 @@ export function useExerciseHistory(
   const [state, setState] = useState<{
     key: string;
     items: ExerciseHistoryEntry[];
+    references?: ExerciseHistoryEntry[];
     hasMore: boolean;
     status: 'loading' | 'success' | 'error';
     loadingMore: boolean;
@@ -119,6 +120,7 @@ export function useExerciseHistory(
   return {
     ...state,
     items: state.key === key ? state.items : [],
+    ...(state.key === key && state.references ? { references: state.references } : {}),
     status: state.key === key ? state.status : ('loading' as const),
     loadMore,
     retry,

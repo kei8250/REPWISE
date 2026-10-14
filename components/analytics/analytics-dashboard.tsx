@@ -186,7 +186,7 @@ export function AnalyticsDataView({
   const bodyParts = analyticsBodyParts(exercises);
   const statusExercises = filterAnalyticsExercises(exercises, bodyPartFilter);
   const selectedExercise = selectAnalyticsExercise(
-    analytics,
+    { ...analytics, exercises: statusExercises },
     selectedExerciseId,
   );
   const bodyPartMax = Math.max(
@@ -260,7 +260,7 @@ export function AnalyticsDataView({
                   onChange={(event) => onSelectExercise(event.target.value)}
                   aria-label="分析する種目"
                 >
-                  {exercises.map((exercise) => (
+                  {statusExercises.map((exercise) => (
                     <NativeSelectOption
                       key={exercise.exerciseId}
                       value={exercise.exerciseId}
@@ -336,7 +336,7 @@ export function AnalyticsDataView({
 
                 <div className="mt-4 grid gap-3 lg:grid-cols-2">
                   <div className="rounded-2xl border p-4">
-                    <p className="text-sm font-black">Progression</p>
+                    <p className="text-sm font-black">直近実績の自動判定</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {progressionReasonLabel(
                         selectedExercise.progression.reasonCode,
@@ -344,7 +344,7 @@ export function AnalyticsDataView({
                     </p>
                   </div>
                   <div className="rounded-2xl border p-4">
-                    <p className="text-sm font-black">状態</p>
+                    <p className="text-sm font-black">複数回の傾向</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {stagnationReasonLabel(selectedExercise.stagnation)}
                     </p>
@@ -508,6 +508,7 @@ export function AnalyticsDataView({
             <h2 id="status-list-title" className="text-lg font-black">
               種目ごとの現在状態
             </h2>
+            <p className="mt-2 text-xs text-muted-foreground">部位選択は上の種目分析とこの一覧に共通です。期間サマリー・部位別バランスは全身を表示します。</p>
             <div
               className="mt-3 flex flex-wrap gap-2"
               aria-label="部位で絞り込む"
@@ -517,7 +518,12 @@ export function AnalyticsDataView({
                   key={bodyPart}
                   type="button"
                   aria-pressed={bodyPartFilter === bodyPart}
-                  onClick={() => setBodyPartFilter(bodyPart)}
+                  onClick={() => {
+                    setBodyPartFilter(bodyPart);
+                    const candidates = filterAnalyticsExercises(exercises, bodyPart);
+                    const next = candidates.find(item => item.exerciseId === selectedExerciseId) ?? candidates[0];
+                    if (next) onSelectExercise(next.exerciseId);
+                  }}
                   className="min-h-11 shrink-0 rounded-full border px-4 text-sm font-bold text-muted-foreground transition aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground"
                 >
                   {bodyPart === ALL_BODY_PARTS ? 'すべて' : bodyPart}

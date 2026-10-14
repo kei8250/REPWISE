@@ -233,3 +233,14 @@ export function createProgressionRequestCache(
     },
   };
 }
+
+
+export function applySuggestionToEmptyTargets(exercise: WorkoutExercise, target: ProgressionTarget, updatedAt = new Date().toISOString()): WorkoutExercise {
+  return { ...exercise, sets: exercise.sets.map(set => {
+    const suggested = target.sets.find(candidate => candidate.position === set.position);
+    if (!suggested || set.setType !== 'working' || set.status !== 'planned' ||
+      set.targetLoadGrams !== null || set.targetRepMin !== null || set.targetRepMax !== null) return set;
+    return { ...set, targetLoadGrams: suggested.targetLoadGrams,
+      targetRepMin: suggested.targetRepMin, targetRepMax: suggested.targetRepMax, updatedAt };
+  }) };
+}

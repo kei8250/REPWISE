@@ -1,5 +1,6 @@
 'use client';
 
+import { ProgressionEvidence } from './progression-evidence';
 import { useRef, useState } from 'react';
 import {
   Check,
@@ -191,16 +192,17 @@ export function WorkoutProgressionSummary({
                           </p>
                         )}
                         <p className="mt-2 text-sm font-black">
-                          {progressionStatusLabel(exercise.decision.status)}
+                          今回の自動判定：{progressionStatusLabel(exercise.decision.status)}
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {progressionReasonLabel(exercise.decision.reasonCode)}
                         </p>
+                        <ProgressionEvidence performance={exercise.performance} profile={exercise.profile} />
                         <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
                           <span
                             className={`font-black ${exercise.stagnation.status === 'progressing' ? 'text-emerald-700' : exercise.stagnation.status === 'stagnating' ? 'text-amber-700' : 'text-muted-foreground'}`}
                           >
-                            状態：
+                            複数回の傾向：
                             {stagnationStatusLabel(exercise.stagnation.status)}
                           </span>
                           <span className="text-muted-foreground">
@@ -216,11 +218,20 @@ export function WorkoutProgressionSummary({
                             PR: {personalRecordLabels.join(' / ')}
                           </p>
                         ) : null}
+                        {acceptedHere && accepted && accepted.status !== 'superseded' && (
+                          <div className="mt-3 rounded-xl border border-primary/30 p-3 text-xs">
+                            <p className="font-bold">ユーザーが確定した次回目標{isApplied ? '（適用済み）' : ''}</p>
+                            <p className="mt-1">{accepted.targetLoadGrams / 1000}kg / {accepted.targetRepMin}〜{accepted.targetRepMax}回 × {accepted.targetWorkingSets}セット</p>
+                            <p className="mt-1 text-muted-foreground">確定値は保持されます。下の自動提案は現在の種目設定による再計算です。</p>
+                            {isStale && <p className="mt-1 text-amber-700">元の記録が変更されています。目標を再確認してください。</p>}
+                          </div>
+                        )}
                         {nextTarget && (
                           <div className="mt-2">
                             <p className="text-xs font-bold text-primary">
-                              次回候補 {nextTarget}
+                              自動提案（未確定） {nextTarget}
                             </p>
+                            <p className="mt-1 text-xs text-muted-foreground">参照：{exercise.performance.workoutLocalDate}の実績。確定操作までは既存の次回目標を変更しません。</p>
                             {isAccepted ? (
                               <p className="mt-2 inline-flex items-center gap-1 text-xs font-black text-emerald-700">
                                 <Check className="size-3.5" />
@@ -242,7 +253,7 @@ export function WorkoutProgressionSummary({
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  className="mt-2 h-8"
+                                  className="mt-2 min-h-11"
                                   disabled={acceptingExerciseId !== null}
                                   onClick={() =>
                                     void acceptTarget(exercise.exerciseId)

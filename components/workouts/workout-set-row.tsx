@@ -1,5 +1,8 @@
 'use client';
 
+import { useState } from 'react';
+import type { ExerciseHistoryEntry } from '@/lib/workouts/history';
+import { validReferenceSet, targetFromReference } from '@/lib/workouts/history';
 import { ArrowDown, ArrowUp, Check, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +34,8 @@ export function WorkoutSetRow({
   comparison,
   previousRecords = [],
   historyStatus = 'success',
+  recentRecord,
+  isNext = false,
 }: {
   set: WorkoutSet;
   number: number;
@@ -45,19 +50,66 @@ export function WorkoutSetRow({
     localDate: string;
     label: string;
     set: WorkoutSet;
+    exerciseNote?: string;
   }>;
+  recentRecord?: ExerciseHistoryEntry;
+  isNext?: boolean;
   historyStatus?: 'loading' | 'success' | 'error';
 }) {
+  const [editing, setEditing] = useState(false);
   const completed = set.status === 'completed';
   const patch = (values: Partial<WorkoutSet>) =>
     onChange({ ...set, ...values, updatedAt: new Date().toISOString() });
-  const canComplete = set.actualLoadGrams !== null && set.actualReps !== null;
+  const canComplete =
+    set.actualLoadGrams !== null &&
+    Number.isInteger(set.actualLoadGrams) &&
+    set.actualLoadGrams >= 0 &&
+    set.actualLoadGrams <= 2_000_000 &&
+    set.actualReps !== null &&
+    Number.isInteger(set.actualReps) &&
+    set.actualReps > 0 &&
+    set.actualReps <= 999;
   const fieldId = (field: string) => `${set.id}-${field}`;
+  if (completed && !editing)
+    return (
+      <div className="rounded-2xl border border-primary/30 bg-primary/5 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-bold">
+            ✓ SET {number} · {setPerformanceLabel(set)}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() => setEditing(true)}
+          >
+            確認・編集
+          </Button>
+        </div>
+        {set.targetLoadGrams !== null && set.targetRepMin !== null && (
+          <p className="mt-1 text-xs">
+            今回の結果：
+            {set.actualLoadGrams! >= set.targetLoadGrams &&
+            set.actualReps! >= set.targetRepMin
+              ? '目標下限を達成'
+              : '目標下限まであと一歩'}
+          </p>
+        )}
+        {set.memo && (
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs">
+            {set.memo}
+          </p>
+        )}
+        {comparison.label && <p className="mt-1 text-xs">{comparison.label}</p>}
+      </div>
+    );
   return (
     <div
+      id={`workout-set-${set.id}`}
       className={cn(
-        'rounded-2xl border bg-card p-3 transition',
+        'min-w-0 scroll-mt-[calc(var(--recording-header-height,144px)+16px)] rounded-2xl border bg-card p-3 transition [&_input]:scroll-mt-[calc(var(--recording-header-height,144px)+24px)] [&_textarea]:scroll-mt-[calc(var(--recording-header-height,144px)+24px)]',
         completed && 'border-primary/40 bg-primary/[.035]',
+        isNext && 'border-primary ring-1 ring-primary/30',
       )}
     >
       <div className="mb-3 flex items-center justify-between">
@@ -71,14 +123,15 @@ export function WorkoutSetRow({
             {completed ? <Check className="size-4" /> : number}
           </span>
           <span className="text-xs font-bold text-muted-foreground">
-            SET {number}
+            {isNext ? '次に取り組む · ' : ''}SET {number}
           </span>
         </div>
         <div className="flex gap-1">
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             disabled={isFirst}
             aria-label={`セット${number}を前へ移動`}
             onClick={() => onMove(-1)}
@@ -88,7 +141,8 @@ export function WorkoutSetRow({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             disabled={isLast}
             aria-label={`セット${number}を後ろへ移動`}
             onClick={() => onMove(1)}
@@ -98,7 +152,8 @@ export function WorkoutSetRow({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             disabled={!canDelete}
             aria-label={`セット${number}を削除`}
             onClick={onDelete}
@@ -107,6 +162,11 @@ export function WorkoutSetRow({
           </Button>
         </div>
       </div>
+      {completed && (
+        <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
+          編集を閉じる
+        </Button>
+      )}
       <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-xs">
         {historyStatus === 'loading' ? (
           <p className="text-muted-foreground">このセットの過去記録を確認中…</p>
@@ -133,16 +193,81 @@ export function WorkoutSetRow({
                       : ''}
                 </span>
               </p>
+              {record.exerciseNote && (
+                <p className="mt-1 whitespace-pre-wrap break-words">
+                  種目メモ：{record.exerciseNote}
+                </p>
+              )}
               {record.set.memo && (
                 <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
-                  {record.set.memo}
+                  セットメモ：{record.set.memo}
                 </p>
               )}
             </div>
           ))
         )}
       </div>
-      <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+      {recentRecord &&
+        recentRecord.workoutId !== undefined &&
+        !recentRecord.sets.some(
+          (item) => item.position === set.position && validReferenceSet(item),
+        ) && (
+          <p className="mb-3 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+            直近の記録 {recentRecord.localDate}（このセットは参考実績なし）
+            {recentRecord.note && ` · 種目メモ：${recentRecord.note}`}
+            {recentRecord.sets.find((item) => item.position === set.position)
+              ?.memo &&
+              ` · セットメモ：${recentRecord.sets.find((item) => item.position === set.position)?.memo}`}
+          </p>
+        )}
+      <div className="mb-3 rounded-xl border border-dashed p-3">
+        <p className="text-xs font-bold">今回の目標（実績とは別に保存）</p>
+        {previousRecords[0] && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="mt-1 min-h-11 whitespace-normal text-xs"
+            onClick={() =>
+              onChange({
+                ...targetFromReference(set, previousRecords[0].set),
+                updatedAt: new Date().toISOString(),
+              })
+            }
+          >
+            前回の実績を目標にコピー
+          </Button>
+        )}
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {(['targetLoadGrams', 'targetRepMin', 'targetRepMax'] as const).map(
+            (field, index) => (
+              <label key={field} className="min-w-0 text-xs">
+                {['目標kg', 'rep下限', 'rep上限'][index]}
+                <Input
+                  aria-label={`セット${number}の${['目標重量', '目標rep下限', '目標rep上限'][index]}`}
+                  type="number"
+                  inputMode={index === 0 ? 'decimal' : 'numeric'}
+                  min="0"
+                  step={index === 0 ? '0.001' : '1'}
+                  className="mt-1 h-11 min-w-0 text-base"
+                  value={
+                    index === 0 ? gramsToKg(set[field]) : (set[field] ?? '')
+                  }
+                  onChange={(event) =>
+                    patch({
+                      [field]:
+                        index === 0
+                          ? kgToGrams(event.target.value)
+                          : optionalInteger(event.target.value),
+                    })
+                  }
+                />
+              </label>
+            ),
+          )}
+        </div>
+      </div>
+      <p className="mb-1 text-xs font-bold">セット後の実績</p>
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2">
         <div>
           <label
             htmlFor={fieldId('actual-load')}
@@ -156,12 +281,13 @@ export function WorkoutSetRow({
             inputMode="decimal"
             type="number"
             min="0"
-            step="0.25"
+            max="2000"
+            step="0.001"
             value={gramsToKg(set.actualLoadGrams)}
             onChange={(event) =>
               patch({ actualLoadGrams: kgToGrams(event.target.value) })
             }
-            className="mt-1 h-11 text-lg font-black"
+            className="mt-1 h-11 min-w-0 text-lg font-black"
           />
         </div>
         <div>
@@ -176,13 +302,14 @@ export function WorkoutSetRow({
             aria-label={`セット${number}の実績rep`}
             inputMode="numeric"
             type="number"
-            min="0"
+            min="1"
+            step="1"
             max="999"
             value={set.actualReps ?? ''}
             onChange={(event) =>
               patch({ actualReps: optionalInteger(event.target.value) })
             }
-            className="mt-1 h-11 text-lg font-black"
+            className="mt-1 h-11 min-w-0 text-lg font-black"
           />
         </div>
         <Button
@@ -212,6 +339,29 @@ export function WorkoutSetRow({
           {completed ? <RotateCcw /> : <Check />}
         </Button>
       </div>
+      {!canComplete &&
+        set.actualLoadGrams !== null &&
+        set.actualReps !== null && (
+          <p className="mt-2 text-xs text-destructive" aria-live="polite">
+            重量は0〜2000kg、回数は1〜999の整数で入力してください。
+          </p>
+        )}
+      {canComplete &&
+        set.targetLoadGrams !== null &&
+        set.targetRepMin !== null && (
+          <p className="mt-2 text-xs font-bold">
+            {completed ? '今回の結果' : '入力中の実績'}：
+            {set.actualLoadGrams! >= set.targetLoadGrams &&
+            set.actualReps! >= set.targetRepMin
+              ? '目標下限を達成'
+              : '目標下限まであと一歩'}
+            {set.targetRepMax !== null &&
+            set.actualLoadGrams! >= set.targetLoadGrams &&
+            set.actualReps! >= set.targetRepMax
+              ? ' · 上限回数も達成'
+              : ''}
+          </p>
+        )}
       {comparison.label && (
         <p
           aria-live="polite"
@@ -225,74 +375,12 @@ export function WorkoutSetRow({
           {comparison.label}
         </p>
       )}
-      <details className="mt-3 rounded-xl bg-muted/60 px-3 py-2">
-        <summary className="cursor-pointer text-xs font-bold text-muted-foreground">
-          目標とセットメモ
-        </summary>
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <div>
-            <label
-              htmlFor={fieldId('target-load')}
-              className="text-[11px] text-muted-foreground"
-            >
-              目標kg
-            </label>
-            <Input
-              id={fieldId('target-load')}
-              aria-label={`セット${number}の目標重量`}
-              inputMode="decimal"
-              type="number"
-              min="0"
-              step="0.25"
-              value={gramsToKg(set.targetLoadGrams)}
-              onChange={(event) =>
-                patch({ targetLoadGrams: kgToGrams(event.target.value) })
-              }
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor={fieldId('target-min')}
-              className="text-[11px] text-muted-foreground"
-            >
-              rep下限
-            </label>
-            <Input
-              id={fieldId('target-min')}
-              aria-label={`セット${number}の目標rep下限`}
-              inputMode="numeric"
-              type="number"
-              min="0"
-              value={set.targetRepMin ?? ''}
-              onChange={(event) =>
-                patch({ targetRepMin: optionalInteger(event.target.value) })
-              }
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor={fieldId('target-max')}
-              className="text-[11px] text-muted-foreground"
-            >
-              rep上限
-            </label>
-            <Input
-              id={fieldId('target-max')}
-              aria-label={`セット${number}の目標rep上限`}
-              inputMode="numeric"
-              type="number"
-              min="0"
-              value={set.targetRepMax ?? ''}
-              onChange={(event) =>
-                patch({ targetRepMax: optionalInteger(event.target.value) })
-              }
-              className="mt-1"
-            />
-          </div>
-        </div>
+      <div className="mt-3">
+        <label htmlFor={fieldId('memo')} className="text-xs font-bold">
+          今回のセットメモ
+        </label>
         <Textarea
+          id={fieldId('memo')}
           aria-label={`セット${number}のメモ`}
           value={set.memo}
           maxLength={2000}
@@ -300,7 +388,7 @@ export function WorkoutSetRow({
           placeholder="フォームや違和感など、このセットのメモ"
           className="mt-2 min-h-16 resize-none bg-background"
         />
-      </details>
+      </div>
     </div>
   );
 }

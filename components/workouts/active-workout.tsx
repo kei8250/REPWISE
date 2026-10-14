@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useWorkoutView } from '@/hooks/use-workout-view';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -41,7 +42,20 @@ export function ActiveWorkout({ id }: { id: string }) {
     conflictBaseVersion,
     complete,
   } = useActiveWorkout(id);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const recordingRoot = useRef<HTMLDivElement>(null);
+  const viewReady = Boolean(workout);
+  useEffect(() => {
+    if (!viewReady) return;
+    const root = recordingRoot.current;
+    const header = root?.querySelector('header');
+    if (!root || !header) return;
+    const measure = () => root.style.setProperty('--recording-header-height', `${header.getBoundingClientRect().height}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [viewReady]);
+  const [selectedId, setSelectedId] = useWorkoutView(id, Boolean(workout));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
@@ -55,7 +69,7 @@ export function ActiveWorkout({ id }: { id: string }) {
     workout?.exercises.find(
       (exercise) => exercise.id === effectiveSelectedId,
     ) ?? null;
-  const progression = useExerciseProgression(selected?.exerciseId ?? null);
+  const progression = useExerciseProgression(selected?.exerciseId ?? null, workout?.localDate, workout?.startedAt, workout?.id);
 
   if (!workout)
     return (
@@ -148,7 +162,7 @@ export function ActiveWorkout({ id }: { id: string }) {
   };
 
   return (
-    <div className="mx-auto min-h-screen max-w-3xl bg-background pb-28">
+    <div ref={recordingRoot} className="mx-auto min-h-screen max-w-3xl bg-background pb-28">
       <header
         data-local-save-state={localSaveState}
         data-sync-state={saveState}
@@ -158,7 +172,8 @@ export function ActiveWorkout({ id }: { id: string }) {
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-11"
             aria-label="ホームへ戻る"
             onClick={() => navigateTo(APP_ROUTES.home)}
           >
@@ -176,6 +191,7 @@ export function ActiveWorkout({ id }: { id: string }) {
           <Button
             type="button"
             size="sm"
+            className="min-h-11"
             disabled={finishing}
             onClick={() => void finish()}
           >
@@ -197,7 +213,7 @@ export function ActiveWorkout({ id }: { id: string }) {
                 key={exercise.id}
                 type="button"
                 onClick={() => setSelectedId(exercise.id)}
-                className={`shrink-0 rounded-full px-3 py-2 text-xs font-bold transition ${exercise.id === effectiveSelectedId ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
+                className={`min-h-11 shrink-0 rounded-full px-3 py-2 text-xs font-bold transition ${exercise.id === effectiveSelectedId ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
               >
                 {index + 1}. {exercise.exerciseNameSnapshot}
               </button>
@@ -205,7 +221,7 @@ export function ActiveWorkout({ id }: { id: string }) {
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
-              className="grid size-8 shrink-0 place-items-center rounded-full border border-dashed"
+              className="grid size-11 shrink-0 place-items-center rounded-full border border-dashed"
               aria-label="種目を追加"
             >
               <Plus className="size-4" />

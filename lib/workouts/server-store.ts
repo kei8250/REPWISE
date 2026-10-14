@@ -1,3 +1,4 @@
+import type { WorkoutHistoryFilter } from './history';
 import type {
   CreateWorkoutInput,
   ExerciseMaster,
@@ -203,8 +204,13 @@ export async function listWorkouts(
   db: D1Database,
   status?: string,
   limit = 30,
+  filter: WorkoutHistoryFilter = {},
 ): Promise<WorkoutSummary[]> {
-  const statusClause = status ? 'AND w.status = ?' : '';
+  const clauses: string[] = [];
+  const values: (string | number)[] = [ownerId];
+  if (status) { clauses.push('AND w.status = ?'); values.push(status); }
+  if (filter.from) { clauses.push('AND w.local_date >= ?'); values.push(filter.from); }
+  if (filter.to) { clauses.push('AND w.local_date <= ?'); values.push(filter.to); }
   const statement = db.prepare(`
     SELECT w.id, w.name, w.status, w.local_date, w.started_at, w.ended_at,
            COUNT(DISTINCT we.id) AS exercise_count,
@@ -214,16 +220,12 @@ export async function listWorkouts(
     FROM workout w
     LEFT JOIN workout_exercise we ON we.workout_id = w.id
     LEFT JOIN workout_set ws ON ws.workout_exercise_id = we.id AND ws.deleted_at IS NULL
-    WHERE w.owner_id = ? AND w.deleted_at IS NULL ${statusClause}
+    WHERE w.owner_id = ? AND w.deleted_at IS NULL ${clauses.join(' ')}
     GROUP BY w.id
-    ORDER BY w.local_date DESC, w.started_at DESC
-    LIMIT ?
+    ORDER BY w.local_date DESC, w.started_at DESC, w.id DESC
+    LIMIT ? OFFSET ?
   `);
-  const result = status
-    ? await statement
-        .bind(ownerId, status, limit)
-        .all<Record<string, unknown>>()
-    : await statement.bind(ownerId, limit).all<Record<string, unknown>>();
+  const result = await statement.bind(...values, limit, filter.offset ?? 0).all<Record<string, unknown>>();
   return result.results.map((row) => ({
     id: String(row.id),
     name: String(row.name),

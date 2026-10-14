@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { WorkoutSet } from '@/lib/workouts/types';
 import type { SetComparison } from '@/lib/progression/active-workout';
 import { cn } from '@/lib/utils';
+import { setPerformanceLabel } from '@/lib/workouts/history';
 
 function gramsToKg(value: number | null) {
   return value === null ? '' : String(value / 1000);
@@ -28,6 +29,8 @@ export function WorkoutSetRow({
   isLast,
   onMove,
   comparison,
+  previousRecords = [],
+  historyStatus = 'success',
 }: {
   set: WorkoutSet;
   number: number;
@@ -38,6 +41,12 @@ export function WorkoutSetRow({
   isLast: boolean;
   onMove: (direction: -1 | 1) => void;
   comparison: SetComparison;
+  previousRecords?: Array<{
+    localDate: string;
+    label: string;
+    set: WorkoutSet;
+  }>;
+  historyStatus?: 'loading' | 'success' | 'error';
 }) {
   const completed = set.status === 'completed';
   const patch = (values: Partial<WorkoutSet>) =>
@@ -97,6 +106,41 @@ export function WorkoutSetRow({
             <Trash2 className="size-4" />
           </Button>
         </div>
+      </div>
+      <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-xs">
+        {historyStatus === 'loading' ? (
+          <p className="text-muted-foreground">このセットの過去記録を確認中…</p>
+        ) : historyStatus === 'error' ? (
+          <p className="text-muted-foreground">
+            過去記録を取得できませんでした
+          </p>
+        ) : previousRecords.length === 0 ? (
+          <p className="text-muted-foreground">SET {number}の過去記録なし</p>
+        ) : (
+          previousRecords.map((record) => (
+            <div key={record.localDate + record.set.id} className="py-1">
+              <p className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                <span className="text-muted-foreground">
+                  {record.label} {record.localDate} · SET{' '}
+                  {record.set.position + 1}
+                </span>
+                <span className="font-bold tabular-nums">
+                  {setPerformanceLabel(record.set)}
+                  {record.set.status === 'skipped'
+                    ? '（スキップ）'
+                    : record.set.status !== 'completed'
+                      ? '（未完了）'
+                      : ''}
+                </span>
+              </p>
+              {record.set.memo && (
+                <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                  {record.set.memo}
+                </p>
+              )}
+            </div>
+          ))
+        )}
       </div>
       <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
         <div>
@@ -168,8 +212,9 @@ export function WorkoutSetRow({
           {completed ? <RotateCcw /> : <Check />}
         </Button>
       </div>
-      {completed && comparison.label && (
+      {comparison.label && (
         <p
+          aria-live="polite"
           className={cn(
             'mt-2 text-[11px] font-bold',
             comparison.status === 'above' && 'text-emerald-700',

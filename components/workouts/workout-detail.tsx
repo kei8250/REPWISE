@@ -46,6 +46,7 @@ import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { CompletedWorkoutEditor } from './completed-workout-editor';
 import { ReviewConflictControl } from './review-conflict-control';
 import { WorkoutProgressionSummary } from './workout-progression-summary';
+import { PastExerciseHistory } from './exercise-history';
 
 type DetailSyncState = 'saved' | 'syncing' | 'pending' | 'error' | 'conflict';
 
@@ -331,7 +332,7 @@ export function WorkoutDetail({ id }: { id: string }) {
   return (
     <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-7 lg:py-10">
       <a
-        href={APP_ROUTES.history}
+        href={workout ? `${APP_ROUTES.history}?date=${workout.localDate}` : APP_ROUTES.history}
         className={buttonVariants({ variant: 'ghost', size: 'sm' })}
       >
         <ChevronLeft /> 履歴へ
@@ -520,12 +521,9 @@ export function WorkoutDetail({ id }: { id: string }) {
                         >
                           <div className="flex items-center gap-3">
                             <span className="grid size-7 place-items-center rounded-full bg-card text-xs font-black">
-                              {set.status === 'completed' ? (
-                                <Check className="size-4 text-primary" />
-                              ) : (
-                                setIndex + 1
-                              )}
+                              {setIndex + 1}
                             </span>
+                            {set.status === 'completed' && <Check className="size-4 shrink-0 text-primary" aria-label="完了" />}
                             <p className="font-black">
                               {set.actualLoadGrams === null
                                 ? '—'
@@ -546,7 +544,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                             </p>
                           )}
                           {set.memo && (
-                            <p className="mt-2 pl-10 text-sm text-muted-foreground">
+                            <p className="mt-2 whitespace-pre-wrap break-words pl-10 text-sm text-muted-foreground">
                               {set.memo}
                             </p>
                           )}
@@ -554,10 +552,11 @@ export function WorkoutDetail({ id }: { id: string }) {
                       ))}
                     </div>
                     {exercise.note && (
-                      <p className="mt-4 rounded-xl border p-3 text-sm text-muted-foreground">
+                      <p className="mt-4 whitespace-pre-wrap break-words rounded-xl border p-3 text-sm text-muted-foreground">
                         {exercise.note}
                       </p>
                     )}
+                    <PastExerciseHistory exerciseId={exercise.exerciseId} localDate={workout.localDate} workoutId={workout.id} startedAt={workout.startedAt} />
                   </CardContent>
                 </Card>
               ))}

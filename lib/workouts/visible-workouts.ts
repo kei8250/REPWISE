@@ -18,6 +18,9 @@ export function mergeVisibleWorkouts(
   const pending = new Set(mutations.map((item) => item.workoutId));
   const items = new Map(server.map((item) => [item.id, item]));
   for (const draft of drafts) {
+    if (draft.workout.status === 'completed' && items.get(draft.workoutId)?.status === 'active') {
+      items.delete(draft.workoutId);
+    }
     const unsynced =
       pending.has(draft.workoutId) || draft.serverUpdatedAt === null;
     if (!unsynced && serverAvailable) continue;

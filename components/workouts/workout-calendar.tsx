@@ -12,10 +12,14 @@ import { useLocalToday } from '@/hooks/use-local-today';
 import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
 import { mergeVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 
-export function WorkoutCalendar() {
+export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelectDate }: {
+  month?: Date;
+  onMonthChange?: (month: Date) => void;
+  onSelectDate?: (date: string) => void;
+} = {}) {
   const today = useLocalToday();
   const [selectedMonth, setMonth] = useState<Date | null>(null);
-  const month = selectedMonth ?? new Date(`${today || '2000-01-01'}T12:00:00`);
+  const month = controlledMonth ?? selectedMonth ?? new Date(`${today || '2000-01-01'}T12:00:00`);
   const [attempt, setAttempt] = useState(0);
   const from = localDateKey(new Date(month.getFullYear(), month.getMonth(), 1));
   const to = localDateKey(
@@ -83,7 +87,7 @@ export function WorkoutCalendar() {
         <Calendar
           locale={ja}
           month={month}
-          onMonthChange={setMonth}
+          onMonthChange={(value) => { setMonth(value); onMonthChange?.(value); }}
           showOutsideDays={false}
           classNames={{ today: 'rounded-lg ring-1 ring-primary/40' }}
           className="w-full [--cell-size:--spacing(10)]"
@@ -96,9 +100,7 @@ export function WorkoutCalendar() {
             labelDayButton: (date) =>
               `${date.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}、${counts.get(localDateKey(date)) ?? 0}件の完了したトレーニング、履歴を開く`,
           }}
-          onDayClick={(date) =>
-            navigateTo(`${APP_ROUTES.history}?date=${localDateKey(date)}`)
-          }
+          onDayClick={(date) => onSelectDate ? onSelectDate(localDateKey(date)) : navigateTo(`${APP_ROUTES.history}?date=${localDateKey(date)}`)}
         />
       </div>
       <div className="mt-3 text-sm text-muted-foreground" aria-live="polite">

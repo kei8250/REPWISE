@@ -524,6 +524,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                               {setIndex + 1}
                             </span>
                             {set.status === 'completed' && <Check className="size-4 shrink-0 text-primary" aria-label="完了" />}
+                            {set.status === 'skipped' && <span className="text-xs text-muted-foreground">スキップ</span>}
                             <p className="font-black">
                               {set.actualLoadGrams === null
                                 ? '—'

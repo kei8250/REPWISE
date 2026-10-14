@@ -1,4 +1,4 @@
-import { createExerciseMaster, listExerciseMasters } from './api-client';
+import { createExerciseMaster, listExerciseMasters, updateExerciseMaster } from './api-client';
 import {
   getExerciseMasterCacheRecord,
   invalidateExerciseMasterCacheRecord,
@@ -6,6 +6,7 @@ import {
   type ExerciseMasterCacheRecord,
 } from './local-drafts';
 import type { CreateExerciseMasterInput, ExerciseMaster } from './types';
+import type { UpdateExerciseMasterInput } from './types';
 
 export const EXERCISE_MASTER_TTL_MS = 15 * 60 * 1000;
 
@@ -98,4 +99,10 @@ export async function createCachedExerciseMaster(
   // the POST. forceRefresh stays set even if IndexedDB is unavailable.
   await invalidateExerciseMasters(created).catch(() => undefined);
   return created;
+}
+
+export async function updateCachedExerciseMaster(id: string, input: UpdateExerciseMasterInput) {
+  const updated = await updateExerciseMaster(id, input);
+  await invalidateExerciseMasters(updated).catch(() => undefined);
+  return updated;
 }

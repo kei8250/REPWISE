@@ -174,6 +174,13 @@ export function ActiveWorkout({ id }: { id: string }) {
             終了
           </Button>
         </div>
+        {saveState === 'error' && error && (
+          <div role="alert" className="mt-3 rounded-xl bg-destructive/5 p-3 text-xs">
+            <p className="font-bold">{localSaveState === 'saved' ? 'この端末には保存済みです。サーバー同期に失敗しています。' : '端末の保存状態を確認してください。'}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-destructive">{error}</p>
+            <a href={APP_ROUTES.settings} className="mt-2 inline-block font-bold text-primary">設定で同期状態を確認</a>
+          </div>
+        )}
         {workout.exercises.length > 0 && (
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {workout.exercises.map((exercise, index) => (

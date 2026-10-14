@@ -1,6 +1,7 @@
 import type { ExerciseHistoryPage, WorkoutHistoryFilter } from './history';
 import type {
   CreateExerciseMasterInput,
+  UpdateExerciseMasterInput,
   CreateWorkoutInput,
   ExerciseMaster,
   Workout,
@@ -66,7 +67,9 @@ async function request<T>(
           })
         : null;
     throw new WorkoutApiError(
-      errorBody?.error ?? `保存に失敗しました（${response.status}）`,
+      response.status === 401 || response.status === 403
+        ? `ログイン状態またはアクセス権を確認してください（${response.status}）。端末の記録は保持されています。`
+        : errorBody?.error ?? `サーバーへの接続に失敗しました（${response.status}）`,
       response.status,
       errorBody?.issues ?? [],
       errorBody?.code ?? null,
@@ -102,6 +105,10 @@ export function getExerciseProgressionRecommendation(
     {},
     fetcher,
   );
+}
+
+export function updateExerciseMaster(id: string, input: UpdateExerciseMasterInput, fetcher?: FetchLike) {
+  return request<ExerciseMaster>(`/api/v2/exercises/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }, fetcher);
 }
 
 export function createWorkout(input: CreateWorkoutInput, fetcher?: FetchLike) {

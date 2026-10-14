@@ -68,6 +68,8 @@ export interface Workout {
 }
 
 export interface WorkoutSummary {
+  localOnly?: boolean;
+  pendingSync?: boolean;
   id: string;
   name: string;
   status: WorkoutStatus;
@@ -93,6 +95,8 @@ export interface CreateExerciseMasterInput {
   name: string;
   bodyPart: string;
 }
+
+export type UpdateExerciseMasterInput = Pick<ExerciseMaster, 'name' | 'bodyPart' | 'defaultRepMin' | 'defaultRepMax' | 'defaultWorkingSets' | 'defaultIncrementGrams' | 'defaultRestSeconds'>;
 
 export type WorkoutMutationOperation =
   | 'create'

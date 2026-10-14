@@ -1,5 +1,7 @@
 'use client';
 
+import { getSyncIdleMs, noteWorkoutEdit, syncAutomatically } from '@/lib/workouts/sync-timing';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWorkout } from '@/lib/workouts/api-client';
 import {
@@ -70,11 +72,11 @@ export function useActiveWorkout(id: string) {
   }, [id]);
 
   const scheduleSync = useCallback(
-    (delay = 80) => {
+    (delay = getSyncIdleMs()) => {
       clearRetryTimer();
       retryTimerRef.current = window.setTimeout(() => {
         retryTimerRef.current = null;
-        void syncPendingWorkoutMutations(id)
+        void syncAutomatically(id)
           .then(async () => {
             await refreshSyncState();
           })
@@ -99,7 +101,7 @@ export function useActiveWorkout(id: string) {
         if (mountedRef.current && localRevisionRef.current === revision) {
           setLocalSaveState('saved');
         }
-        scheduleSync();
+        if (mountedRef.current) scheduleSync();
       } catch (cause) {
         const message =
           cause instanceof Error ? cause.message : 'ローカル保存に失敗しました';
@@ -121,12 +123,14 @@ export function useActiveWorkout(id: string) {
       if (!current || current.status !== 'active') return;
       const nextValue =
         typeof updater === 'function' ? updater(current) : updater;
+      clearRetryTimer();
+      noteWorkoutEdit(id);
       const next = { ...nextValue, updatedAt: new Date().toISOString() };
       workoutRef.current = next;
       setWorkoutState(next);
       void persistLocalMutation(next, 'replace').catch(() => undefined);
     },
-    [persistLocalMutation],
+    [persistLocalMutation, clearRetryTimer, id],
   );
 
   useEffect(() => {
@@ -385,8 +389,14 @@ export function useActiveWorkout(id: string) {
     };
     workoutRef.current = completed;
     setWorkoutState(completed);
-    await persistLocalMutation(completed, 'complete');
-    return completed;
+    try {
+      await persistLocalMutation(completed, 'complete');
+      return completed;
+    } catch (cause) {
+      workoutRef.current = current;
+      setWorkoutState(current);
+      throw cause;
+    }
   }, [persistLocalMutation]);
 
   return {

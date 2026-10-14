@@ -9,6 +9,8 @@ import { localDateKey } from '@/lib/workouts/history';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { useLocalToday } from '@/hooks/use-local-today';
+import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
+import { mergeVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 
 export function WorkoutCalendar() {
   const today = useLocalToday();
@@ -28,6 +30,7 @@ export function WorkoutCalendar() {
     if (!today) return;
     let alive = true;
     void (async () => {
+      const local = await readLocalWorkoutSources().catch(() => ({ drafts: [], mutations: [] }));
       const items: WorkoutSummary[] = [];
       while (alive) {
         const page = await listWorkouts('completed', 100, undefined, {
@@ -38,9 +41,12 @@ export function WorkoutCalendar() {
         items.push(...page);
         if (page.length < 100) break;
       }
-      if (alive) setState({ from, items, status: 'success' });
-    })().catch(() => {
-      if (alive) setState({ from, items: [], status: 'error' });
+      if (alive) setState({ from, items: mergeVisibleWorkouts(items, local.drafts, local.mutations, 'completed', { from, to }), status: 'success' });
+    })().catch(async () => {
+      if (alive) {
+        const local = await readLocalWorkoutSources().catch(() => ({ drafts: [], mutations: [] }));
+        if (alive) setState({ from, items: mergeVisibleWorkouts([], local.drafts, local.mutations, 'completed', { from, to }, false), status: 'error' });
+      }
     });
     return () => {
       alive = false;

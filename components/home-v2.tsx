@@ -8,7 +8,7 @@ import { ArrowRight, ChevronRight, Clock3, History } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { getWorkout, listWorkouts } from '@/lib/workouts/api-client';
+import { getWorkout } from '@/lib/workouts/api-client';
 import {
   type HomeCompletedState,
   loadHomeActiveWorkout,
@@ -49,7 +49,7 @@ export function HomeV2() {
     void (async () => {
       const result = await loadHomeActiveWorkout({
         getLocalDraft: getLatestActiveWorkoutDraft,
-        listServerActive: () => listWorkouts('active', 1),
+        listServerActive: async () => (await loadVisibleWorkouts('active', 1)).items,
         getServerWorkout: getWorkout,
         listMutations: listWorkoutMutations,
         onLocalReady: (workout) => {

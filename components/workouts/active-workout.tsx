@@ -78,6 +78,15 @@ export function ActiveWorkout({ id }: { id: string }) {
       </div>
     );
 
+  if (workout.status === 'completed' && !finishing) return (
+    <div className="mx-auto max-w-xl space-y-4 p-6 text-center">
+      <Check className="mx-auto size-8 text-primary" />
+      <h1 className="text-xl font-black">このトレーニングは終了済みです</h1>
+      <p className="text-sm text-muted-foreground">{workout.name}</p>
+      <a href={APP_ROUTES.workoutDetail(workout.id)} className="inline-block font-bold text-primary">完了した記録を確認する</a>
+    </div>
+  );
+
   const updateExercise = (next: WorkoutExerciseType) =>
     setWorkout((current) => ({
       ...current,
@@ -119,7 +128,7 @@ export function ActiveWorkout({ id }: { id: string }) {
   const finish = async () => {
     if (
       !window.confirm(
-        'このワークアウトを終了しますか？終了後はPhase 1Aでは編集できません。',
+        '入力済みのセットを確定してトレーニングを終了しますか？未入力のセットはスキップになります。終了後も履歴から編集できます。',
       )
     )
       return;

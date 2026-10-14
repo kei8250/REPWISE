@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -26,10 +26,14 @@ export function WorkoutSummaryList({
   status,
   emptyMessage,
   localDate,
+  from,
+  to,
 }: {
   status?: 'active' | 'completed';
   emptyMessage: string;
   localDate?: string;
+  from?: string;
+  to?: string;
 }) {
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,13 +42,30 @@ export function WorkoutSummaryList({
   const [moreError, setMoreError] = useState(false);
   const [serverOffset, setServerOffset] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(true);
-  const pageSize = 30;
+  const pageSize = 8;
+  const [page, setPage] = useState(0);
+  const pageHeading = useRef<HTMLParagraphElement>(null);
+  const switchPage = (next: number) => {
+    setPage(next);
+    window.requestAnimationFrame(() => {
+      pageHeading.current?.focus({ preventScroll: true });
+      pageHeading.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
   const [error, setError] = useState<string | null>(null);
   const load = () => {
     setLoading(true);
     setError(null);
-    void loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate })
-      .then((loaded) => { setItems(loaded.items); setHasMore(loaded.hasMore); setServerOffset(loaded.serverCount); setServerAvailable(loaded.serverAvailable); })
+    void loadVisibleWorkouts(status, pageSize, {
+      from: localDate ?? from,
+      to: localDate ?? to,
+    })
+      .then((loaded) => {
+        setItems(loaded.items);
+        setHasMore(loaded.hasMore);
+        setServerOffset(loaded.serverCount);
+        setServerAvailable(loaded.serverAvailable);
+      })
       .catch((cause) =>
         setError(
           cause instanceof Error ? cause.message : '履歴を読み込めませんでした',
@@ -54,9 +75,17 @@ export function WorkoutSummaryList({
   };
   useEffect(() => {
     let alive = true;
-    void loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate })
+    void loadVisibleWorkouts(status, pageSize, {
+      from: localDate ?? from,
+      to: localDate ?? to,
+    })
       .then((loaded) => {
-        if (alive) { setItems(loaded.items); setHasMore(loaded.hasMore); setServerOffset(loaded.serverCount); setServerAvailable(loaded.serverAvailable); }
+        if (alive) {
+          setItems(loaded.items);
+          setHasMore(loaded.hasMore);
+          setServerOffset(loaded.serverCount);
+          setServerAvailable(loaded.serverAvailable);
+        }
       })
       .catch((cause) => {
         if (alive)
@@ -72,18 +101,41 @@ export function WorkoutSummaryList({
     return () => {
       alive = false;
     };
-  }, [status, localDate]);
+  }, [status, localDate, from, to]);
   const loadMore = async () => {
     if (loadingMore) return;
     setLoadingMore(true);
     setMoreError(false);
     try {
-      const loaded = await loadVisibleWorkouts(status, pageSize, { from: localDate, to: localDate, offset: serverOffset });
-      setItems((previous) => [...new Map([...previous, ...loaded.items].map((item) => [item.id, item])).values()]);
-      setServerOffset((offset) => offset + loaded.serverCount);
-      setHasMore(loaded.hasMore);
-    } catch { setMoreError(true); }
-    finally { setLoadingMore(false); }
+      let combined = items;
+      let offset = serverOffset;
+      let more = hasMore;
+      const next = page + 1;
+      while (combined.length < (next + 1) * pageSize && more) {
+        const loaded = await loadVisibleWorkouts(status, pageSize, {
+          from: localDate ?? from,
+          to: localDate ?? to,
+          offset,
+        });
+        combined = [
+          ...new Map(
+            [...combined, ...loaded.items].map((item) => [item.id, item]),
+          ).values(),
+        ];
+        offset += loaded.serverCount;
+        more = loaded.hasMore;
+      }
+      setItems(combined);
+      setServerOffset(offset);
+      setHasMore(more);
+      switchPage(
+        Math.min(next, Math.max(0, Math.ceil(combined.length / pageSize) - 1)),
+      );
+    } catch {
+      setMoreError(true);
+    } finally {
+      setLoadingMore(false);
+    }
   };
   if (loading)
     return (
@@ -109,8 +161,16 @@ export function WorkoutSummaryList({
     );
   return (
     <div className="space-y-3">
-      {!serverAvailable && <p className="text-xs text-muted-foreground">サーバーに接続できないため、端末の保存済み記録を表示しています。</p>}
-      {items.map((item) => {
+      {!serverAvailable && (
+        <p className="text-xs text-muted-foreground">
+          サーバーに接続できないため、端末の保存済み記録を表示しています。
+        </p>
+      )}
+      <p ref={pageHeading} tabIndex={-1} className="scroll-mt-4 text-xs text-muted-foreground" aria-live="polite">
+        {page * pageSize + 1}〜{Math.min((page + 1) * pageSize, items.length)}
+        件目
+      </p>
+      {items.slice(page * pageSize, (page + 1) * pageSize).map((item) => {
         const active = item.status === 'active';
         const href = workoutRoute(item.id, item.status);
         return (
@@ -126,12 +186,23 @@ export function WorkoutSummaryList({
                 )}
               </span>
               <div className="min-w-0 flex-1">
-                <a href={href} className="block truncate font-black hover:text-primary">{item.name}</a>
+                <a
+                  href={href}
+                  className="block truncate font-black hover:text-primary"
+                >
+                  {item.name}
+                </a>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatDate(item.localDate)} · {item.exerciseCount}種目 ·{' '}
-                  {item.completedSetCount}/{item.setCount}セット完了
+                  {active ? `${item.completedSetCount}/${item.setCount}セット完了` : `${item.completedSetCount}セット記録`}
                 </p>
-                {item.localOnly && <p className="mt-1 text-xs font-bold text-amber-700">{item.pendingSync ? '端末に保存済み・未同期' : '端末の保存済み記録'}</p>}
+                {item.localOnly && (
+                  <p className="mt-1 text-xs font-bold text-amber-700">
+                    {item.pendingSync
+                      ? '端末に保存済み・未同期'
+                      : '端末の保存済み記録'}
+                  </p>
+                )}
               </div>
               <a
                 href={href}
@@ -147,8 +218,39 @@ export function WorkoutSummaryList({
           </Card>
         );
       })}
-      {moreError && <p role="alert" className="text-sm text-destructive">古い履歴を取得できませんでした。再度お試しください。</p>}
-      {hasMore && <Button type="button" variant="outline" className="w-full" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? '読み込み中…' : 'さらに以前の履歴を見る'}</Button>}
+      {moreError && (
+        <p role="alert" className="text-sm text-destructive">
+          古い履歴を取得できませんでした。再度お試しください。
+        </p>
+      )}
+      <nav
+        aria-label="履歴のページ切替"
+        className="flex items-center justify-between gap-3"
+      >
+        <Button
+          type="button"
+          variant="outline"
+          disabled={page === 0 || loadingMore}
+          onClick={() => switchPage(page - 1)}
+        >
+          前の8件
+        </Button>
+        <span className="text-xs text-muted-foreground">{page + 1}ページ</span>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={
+            loadingMore || (!hasMore && (page + 1) * pageSize >= items.length)
+          }
+          onClick={() => {
+            if (!hasMore || (page + 2) * pageSize <= items.length)
+              switchPage(page + 1);
+            else void loadMore();
+          }}
+        >
+          {loadingMore ? '読み込み中…' : '次の8件'}
+        </Button>
+      </nav>
     </div>
   );
 }

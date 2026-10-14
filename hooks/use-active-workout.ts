@@ -24,6 +24,7 @@ import {
   syncPendingWorkoutMutations,
 } from '@/lib/workouts/sync-queue';
 import type { SaveState, Workout } from '@/lib/workouts/types';
+import { prepareWorkoutCompletion } from '@/lib/workouts/completion';
 
 export function useActiveWorkout(id: string) {
   const [workout, setWorkoutState] = useState<Workout | null>(null);
@@ -371,22 +372,8 @@ export function useActiveWorkout(id: string) {
   const complete = useCallback(async () => {
     const current = workoutRef.current;
     if (!current) throw new Error('終了するワークアウトがありません');
-    if (!current.exercises.length)
-      throw new Error('種目を1つ以上追加してください');
-    if (
-      !current.exercises
-        .flatMap((exercise) => exercise.sets)
-        .some((set) => set.status === 'completed')
-    ) {
-      throw new Error('完了したセットを1つ以上記録してください');
-    }
-    const endedAt = new Date().toISOString();
-    const completed: Workout = {
-      ...current,
-      status: 'completed',
-      endedAt,
-      updatedAt: endedAt,
-    };
+    if (current.status === 'completed') return current;
+    const completed = prepareWorkoutCompletion(current);
     workoutRef.current = completed;
     setWorkoutState(completed);
     try {

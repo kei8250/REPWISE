@@ -244,7 +244,14 @@ export async function saveActiveWorkoutDraft(
   const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
   const complete = transactionComplete(transaction);
   const record = createDraftRecord(workout, 'active', options);
-  transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(record);
+  const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const value = await requestResult(store.get(workout.id));
+  if (isLocalWorkoutDraft(value) &&
+      (value.draftStatus !== 'active' || value.localUpdatedAt > record.localUpdatedAt)) {
+    await complete;
+    return value;
+  }
+  store.put(record);
   await complete;
   return record;
 }
@@ -330,6 +337,10 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const currentDraft = isLocalWorkoutDraft(currentDraftValue)
     ? currentDraftValue
     : null;
+  if (operation === 'replace' && currentDraft && currentDraft.draftStatus !== 'active') {
+    await complete;
+    throw new Error('このトレーニングは終了済みです。履歴から確認・編集してください。');
+  }
   if (currentDraft) {
     draft.serverUpdatedAt = currentDraft.serverUpdatedAt;
     draft.serverVersion = currentDraft.serverVersion;
@@ -805,6 +816,11 @@ export function selectWorkoutForRestore(
 ): WorkoutRestoreResult {
   if (serverWorkout && serverWorkout.status !== 'active') {
     return { workout: serverWorkout, source: 'server' };
+  }
+  if (localDraft?.workout.status === 'completed' &&
+      ['completed', 'completed_edit'].includes(localDraft.draftStatus) &&
+      ((!serverWorkout && hasPendingMutations) || (serverWorkout && (hasPendingMutations || (localDraft.serverVersion ?? localDraft.workout.version) >= serverWorkout.version)))) {
+    return { workout: localDraft.workout, source: 'local' };
   }
   if (
     !localDraft ||

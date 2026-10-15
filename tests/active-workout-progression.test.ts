@@ -234,7 +234,7 @@ describe('Phase 3B set comparison', () => {
       ),
     ).toEqual({
       status: 'above',
-      label: '前回より重量 +2.5kg',
+      label: '前回より重量 +2.5kg · 回数 -2回（重量と回数をあわせて確認）',
     });
   });
 

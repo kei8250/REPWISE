@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { loadExerciseMasters } from '@/lib/workouts/exercise-master-cache';
+import { loadBasisLabel, loadBasisHelp } from '@/lib/workouts/reps';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 
 export function ExerciseSettingsReference({
@@ -39,6 +40,8 @@ export function ExerciseSettingsReference({
         この種目の設定・判定ルール
       </summary>
       {master ? (
+        <div>
+        {master.repMode === 'per_side' && <p className="mb-3 text-sm">新規記録の重量基準：{loadBasisLabel(master.loadBasis)}。{loadBasisHelp(master.loadBasis)}</p>}
         <dl className="grid grid-cols-2 gap-2 text-sm">
           <div>
             <dt className="text-muted-foreground">回数範囲{master.repMode === 'per_side' ? '（左右それぞれ）' : ''}</dt>
@@ -63,6 +66,7 @@ export function ExerciseSettingsReference({
             <dd>{master.defaultRestSeconds ?? '—'}秒</dd>
           </div>
         </dl>
+        </div>
       ) : (
         <p className="text-sm">
           {failed
@@ -71,7 +75,7 @@ export function ExerciseSettingsReference({
         </p>
       )}
       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-        設定変更は新しく追加する種目の初期値と、現在のルールによる提案・過去記録の再判定に反映されます。保存済みの実績・メモ・セット目標は書き換えません。確定済みの次回目標も保持されます。過去の判定は当時のルールを固定保存していません。
+        設定変更は新しく追加する種目の初期値と、現在のルールによる提案・過去記録の再判定に反映されます。保存済みの重量基準・実績・メモ・セット目標は書き換えません。記録中の基準は各セットの重量欄に表示します。確定済みの次回目標も保持されます。過去の判定は当時のルールを固定保存していません。
       </p>
       <a
         href="/settings"

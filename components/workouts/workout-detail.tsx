@@ -35,7 +35,8 @@ import { copyWorkoutForToday } from '@/lib/workouts/draft';
 import {
   getLocalWorkoutDraft,
   listWorkoutMutations,
-  markLocalWorkoutDraftCompleted,
+  cancelCompletedWorkoutEdit,
+  repairCompletedWorkoutDraft,
   saveCompletedWorkoutEditDraft,
   saveWorkoutDraftAndEnqueueMutation,
   selectWorkoutDetailForDisplay,
@@ -82,6 +83,7 @@ export function WorkoutDetail({ id }: { id: string }) {
     else if (queue.syncing) setSyncState('syncing');
     else if (queue.total) setSyncState('pending');
     else setSyncState('saved');
+    if ((queue.blocked || queue.failed || queue.conflict) && queue.lastError) setError(queue.lastError);
     return queue;
   }, [id]);
 
@@ -123,14 +125,26 @@ export function WorkoutDetail({ id }: { id: string }) {
       getWorkout(id),
       getLocalWorkoutDraft(id),
       listWorkoutMutations(id),
-    ]).then(([serverResult, localResult, queueResult]) => {
+    ]).then(async ([serverResult, localResult, queueResult]) => {
       if (!active) return;
       const server =
         serverResult.status === 'fulfilled' ? serverResult.value : null;
-      const local =
+      let local =
         localResult.status === 'fulfilled' ? localResult.value : null;
-      const queued =
+      let queued =
         queueResult.status === 'fulfilled' ? queueResult.value : [];
+      const [latestLocal, latestQueue] = await Promise.allSettled([getLocalWorkoutDraft(id), listWorkoutMutations(id)]);
+      if (!active) return;
+      if (latestLocal.status === 'fulfilled') local = latestLocal.value;
+      if (latestQueue.status === 'fulfilled') queued = latestQueue.value;
+      let repairError: string | null = null;
+      if (local?.draftStatus === 'completed' && local.workout.status !== 'completed') {
+        try {
+          await repairCompletedWorkoutDraft(server ?? local.workout);
+          local = await getLocalWorkoutDraft(id);
+        } catch { repairError = '端末の保存状態を修復できませんでした。サーバーの完了記録を表示します。'; }
+        if (!active) return;
+      }
       const serverKnownMissing =
         serverResult.status === 'rejected' &&
         serverResult.reason instanceof WorkoutApiError &&
@@ -143,11 +157,11 @@ export function WorkoutDetail({ id }: { id: string }) {
         queued.length > 0,
         serverKnownMissing,
       );
-      if (server) setServerBaseline(server);
+      if (server?.status === 'completed') setServerBaseline(server);
       if (selected.workout) {
         setWorkout(selected.workout);
         setEditing(local?.draftStatus === 'completed_edit');
-        setError(null);
+        setError(repairError);
       } else {
         setWorkout(null);
         const cause =
@@ -177,6 +191,8 @@ export function WorkoutDetail({ id }: { id: string }) {
     setSavingLocally(true);
     try {
       await saveCompletedWorkoutEditDraft(next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '端末へ編集内容を保存できませんでした');
     } finally {
       setSavingLocally(false);
     }
@@ -218,11 +234,14 @@ export function WorkoutDetail({ id }: { id: string }) {
   }
 
   async function cancelEdit() {
-    setEditing(false);
-    if (syncState !== 'conflict' && serverBaseline) {
-      setWorkout(serverBaseline);
-      await markLocalWorkoutDraftCompleted(serverBaseline);
-    }
+    setSavingLocally(true);
+    try {
+      const restored = await cancelCompletedWorkoutEdit(id, { serverWorkout: serverBaseline });
+      setWorkout(restored);
+      setEditing(false);
+      setError(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '編集を取り消せませんでした'); }
+    finally { setSavingLocally(false); }
   }
 
   async function deleteWorkout() {
@@ -275,9 +294,11 @@ export function WorkoutDetail({ id }: { id: string }) {
 
   async function retrySync() {
     setSyncState('syncing');
-    await syncPendingWorkoutMutations(id, { manual: true });
-    await refreshSyncState();
-    await refreshLocalWorkout();
+    try {
+      await syncPendingWorkoutMutations(id, { manual: true });
+      await refreshSyncState();
+      await refreshLocalWorkout();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '同期できませんでした'); setSyncState('error'); }
   }
 
   async function startSameMenu() {
@@ -362,15 +383,17 @@ export function WorkoutDetail({ id }: { id: string }) {
               <p className="mt-2 text-sm text-muted-foreground">
                 {syncState === 'conflict'
                   ? 'サーバー側の記録は削除されていません。'
-                  : '通常の履歴には表示されません。データはsoft deleteで保持されています。'}
+                  : '通常の履歴には表示されません。取り消すと元の記録に戻せます。'}
               </p>
             </div>
             <p
               data-sync-state={syncState}
               className="text-xs font-bold text-muted-foreground"
             >
-              {syncLabel}
+              {syncState === 'saved' ? '削除を同期済み' : syncState === 'syncing' ? '削除を同期中' : syncState === 'error' ? '削除の同期に失敗・端末では削除済み' : syncState === 'conflict' ? '削除の同期が競合しています' : '削除の同期待ち'}
             </p>
+            {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
+            {(syncState === 'error' || syncState === 'pending') && <Button type="button" variant="outline" className="min-h-11" onClick={() => void retrySync()}>削除の同期を再試行</Button>}
             {syncState === 'conflict' ? (
               <div
                 role="alert"

@@ -1,4 +1,4 @@
-import { hasSideReps, repsLabel } from '@/lib/workouts/reps';
+import { hasSideReps, repsLabel, effectiveReps } from '@/lib/workouts/reps';
 import type {
   ExerciseProgressionRecommendation,
   ProgressionPerformanceSet,
@@ -181,6 +181,7 @@ export function compareWorkingSet(
   current: WorkoutSet,
   previous: ProgressionPerformanceSet | null,
 ): SetComparison {
+  if (previous && (current.loadBasis ?? 'per_rep') !== (previous.loadBasis ?? 'per_rep')) return { status: 'unavailable', label: '重量の入力基準が異なるため前回比は比較しません' };
   if (
     current.setType !== 'working' ||
     current.status !== 'completed' ||
@@ -201,7 +202,7 @@ export function compareWorkingSet(
     const sign = loadDifference > 0 ? '+' : '-';
     return {
       status: loadDifference > 0 ? 'above' : 'below',
-      label: `前回より重量 ${sign}${formatLoadGrams(Math.abs(loadDifference))}`,
+      label: `前回より重量 ${sign}${formatLoadGrams(Math.abs(loadDifference))} · 回数 ${(current.actualReps! - previous.actualReps!) > 0 ? '+' : ''}${current.actualReps! - previous.actualReps!}回（重量と回数をあわせて確認）`,
     };
   }
   const repDifference =
@@ -216,6 +217,14 @@ export function compareWorkingSet(
     status: repDifference > 0 ? 'above' : 'below',
     label: `前回 ${sign}${repDifference}rep`,
   };
+}
+
+export function setAchievementLabel(set: WorkoutSet) {
+  const reps = effectiveReps(set);
+  if (set.actualLoadGrams === null || reps === null || set.targetLoadGrams === null || set.targetRepMin === null) return null;
+  if (set.actualLoadGrams < set.targetLoadGrams || reps < set.targetRepMin) return '目標下限まであと一歩';
+  if (set.targetRepMax !== null && reps >= set.targetRepMax) return `目標達成・上限${set.targetRepMax}回を達成`;
+  return `目標下限を達成${set.targetRepMax == null ? '' : `・上限まであと${set.targetRepMax - reps}回`}`;
 }
 
 export function createProgressionRequestCache(

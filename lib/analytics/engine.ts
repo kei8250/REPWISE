@@ -1,4 +1,4 @@
-import { totalReps } from '@/lib/workouts/reps';
+import { totalReps, effectiveLoadGrams } from '@/lib/workouts/reps';
 import {
   evaluateProgression,
   type ProgressionExercisePerformance,
@@ -356,7 +356,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
             .filter((set) => (set.actualReps as number) <= E1RM_MAX_REPS)
             .map((set) =>
               calculateE1rmGrams(
-                set.actualLoadGrams as number,
+                effectiveLoadGrams(set) as number,
                 set.actualReps as number,
               ),
             ),
@@ -376,7 +376,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         localDate: item.performance.workoutLocalDate,
         value: Math.max(
           ...validSets(item.performance).map(
-            (set) => set.actualLoadGrams as number,
+            (set) => effectiveLoadGrams(set) as number,
           ),
         ),
       }));
@@ -393,7 +393,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
       const repTrend = inRange.flatMap((item) => {
         const bestByLoad = new Map<number, number>();
         for (const set of validSets(item.performance)) {
-          const load = set.actualLoadGrams as number;
+          const load = effectiveLoadGrams(set) as number;
           bestByLoad.set(
             load,
             Math.max(bestByLoad.get(load) ?? 0, set.actualReps as number),

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // Use a dedicated Chromium profile. Every app API is intercepted with synthetic data.
 // This script never navigates to the public site or uses a real database.
+const stateProgressReview = process.argv.includes('--state-progress');
 const navigationReview = process.argv.includes('--navigation');
 const fixtureOrigin = 'http://localhost:3000';
 const target = (
@@ -11,19 +12,24 @@ const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r, { once: true }));
 let seq = 0;
 const pending = new Map();
+const extraTargets = new Map();
+const closingSessions = new Set();
 const exceptions = [];
-const send = (method, params = {}) =>
+const send = (method, params = {}, sessionId) =>
   new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
+    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
 let online = false;
+let failureCode = 500;
+let customRecommendation = null;
+const dialogs = [];
 let posts = 0;
 const server = new Map();
 const processed = new Map();
 const fixturesDir = process.env.REPWISE_REVIEW_OUTPUT_DIR ?? fileURLToPath(
-  new URL(navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
+  new URL(stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
 );
 let master = {
   id: 'ex-bench-press',
@@ -258,8 +264,10 @@ ws.addEventListener('message', async (event) => {
     }
     return;
   }
+  if (m.sessionId && closingSessions.has(m.sessionId)) return;
   if (m.method === 'Page.javascriptDialogOpening') {
-    await send('Page.handleJavaScriptDialog', { accept: true });
+    dialogs.push(m.params.message);
+    await send('Page.handleJavaScriptDialog', { accept: true }, m.sessionId);
     return;
   }
   if (m.method === 'Runtime.exceptionThrown')
@@ -296,8 +304,8 @@ ws.addEventListener('message', async (event) => {
           throw new Error('Client queued fractional actual reps');
       }
     if (!online) {
-      code = 500;
-      data = { error: 'テスト用の通信失敗' };
+      code = failureCode;
+      data = { error: failureCode === 400 ? '完了状態が必要です（旧サーバーのテスト応答）' : 'テスト用の通信失敗' };
     } else if (processed.has(mutation.mutationId))
       data = { ...processed.get(mutation.mutationId), duplicate: true };
     else {
@@ -347,7 +355,7 @@ ws.addEventListener('message', async (event) => {
       exerciseId,
       profile: { ...profile, exerciseId },
       performance: { ...performance, exerciseId, sets },
-      decision: side
+      decision: !side && customRecommendation ? customRecommendation : side
         ? {
             ...decision,
             currentLoadGrams: 20500,
@@ -470,7 +478,7 @@ ws.addEventListener('message', async (event) => {
     responseCode: code,
     responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
     body: Buffer.from(JSON.stringify(data)).toString('base64'),
-  });
+  }, m.sessionId).catch(error => { if (!closingSessions.has(m.sessionId)) exceptions.push(JSON.stringify(error)); });
 });
 await send('Page.enable');
 await send('Page.handleJavaScriptDialog', { accept: false }).catch(() => {});
@@ -574,8 +582,12 @@ async function select(selector, value) {
     `(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`,
   );
 }
+try {
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
-if (navigationReview) {
+if (stateProgressReview) {
+  const { reviewWorkoutStateProgress } = await import('./review-workout-state-progress.mjs');
+  await reviewWorkoutStateProgress({ send, evalJs, go, reload, until, tap, clickText, type, select, pause, shot, setViewport, overflow, check, server, fixtureWorkout, oldSets, dialogs, registerTarget: (id, sessionId) => extraTargets.set(id, sessionId), markClosing: sessionId => closingSessions.add(sessionId), setOnline: value => { online = value; }, setFailureCode: value => { failureCode = value; }, setRecommendation: value => { customRecommendation = value; }, fixturesDir });
+} else if (navigationReview) {
   const { reviewWorkoutNavigation } = await import('./review-workout-navigation.mjs');
   await reviewWorkoutNavigation({ send, evalJs, go, until, tap, clickText, pause, shot, setViewport, overflow, check, server, fixtureWorkout, setOnline: (value) => { online = value; }, fixturesDir });
 } else {
@@ -822,5 +834,11 @@ check(exceptions.length === 0, 'no_browser_exceptions');
 console.log(
   JSON.stringify({ browserExceptions: exceptions, fixtureSyncRequests: posts }),
 );
-await send('Page.navigate', { url: 'about:blank' });
-ws.close();
+} finally {
+  for (const [targetId, sessionId] of extraTargets) {
+    if (sessionId) closingSessions.add(sessionId);
+    await send('Target.closeTarget', { targetId }).catch(() => undefined);
+  }
+  await send('Page.navigate', { url: 'about:blank' });
+  ws.close();
+}

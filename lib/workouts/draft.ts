@@ -98,6 +98,8 @@ export function copyWorkoutForToday(
               position: setPosition,
               status: 'planned',
               setType: 'working',
+              ...(set?.role ? { role: set.role } : {}),
+              ...(set?.loadBasis ? { loadBasis: set.loadBasis } : {}),
               targetLoadGrams:
                 set?.targetLoadGrams ?? set?.actualLoadGrams ?? null,
               targetRepMin:
@@ -186,6 +188,8 @@ export function createSet(position: number, previous?: WorkoutSet): WorkoutSet {
     position,
     status: 'planned',
     setType: 'working',
+    ...(previous?.role ? { role: previous.role } : {}),
+    ...(previous?.loadBasis ? { loadBasis: previous.loadBasis } : {}),
     targetLoadGrams: previous?.targetLoadGrams ?? null,
     targetRepMin: previous?.targetRepMin ?? null,
     targetRepMax: previous?.targetRepMax ?? null,
@@ -218,6 +222,7 @@ export function createWorkoutExercise(
     updatedAt: timestamp,
     sets: Array.from({ length: setCount }, (_, index) => {
       const set = createSet(index);
+      if (exercise.loadBasis) set.loadBasis = exercise.loadBasis;
       set.targetRepMin = exercise.defaultRepMin;
       set.targetRepMax = exercise.defaultRepMax;
       return set;

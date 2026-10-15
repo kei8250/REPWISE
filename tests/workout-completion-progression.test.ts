@@ -182,6 +182,7 @@ beforeEach(() => {
     '0004_grey_kinsey_walden.sql',
     '0005_neat_molly_hayes.sql',
     '0006_side_repetitions.sql',
+    '0007_set_roles_and_load_basis.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),
@@ -311,7 +312,7 @@ describe('Phase 3C-1 completion progression summary', () => {
     });
   });
 
-  it('重量がセットごとに異なる場合は推測せず判定不能にする', async () => {
+  it('重量が異なる場合はセットごとの次回重量を提案する', async () => {
     insertCompletedWorkout(sqlite, {
       reps: [10, 10, 10],
       loads: [100_000, 102_500, 100_000],
@@ -319,9 +320,10 @@ describe('Phase 3C-1 completion progression summary', () => {
     const exercise = (await getServerSummary(db, 'summary-workout'))
       .exercises[0];
     expect(exercise.decision).toMatchObject({
-      status: 'insufficient_data',
-      reasonCode: 'inconsistent_load',
+      status: 'set_specific',
+      reasonCode: 'set_specific_progression',
     });
+    expect(exercise.decision.setDecisions?.map(set => set.targetLoadGrams)).toEqual([102500, 105000, 102500]);
     expect(formatWorkingSetPerformance(exercise.performance)).toBe(
       '100kg×10 / 102.5kg×10 / 100kg×10',
     );

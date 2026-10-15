@@ -306,6 +306,12 @@ export function ActiveWorkout({ id }: { id: string }) {
             startedAt={workout.startedAt}
             progression={progression.state}
             onRetryProgression={progression.retry}
+            nextActionLabel={workout.exercises.some(exercise => exercise.id !== selected.id && !['completed', 'skipped'].includes(exercise.status)) ? '次の未完了の種目へ' : 'ワークアウトを終了'}
+            onFinished={() => {
+              const next = workout.exercises.find(exercise => exercise.id !== selected.id && !['completed', 'skipped'].includes(exercise.status));
+              if (next) { setSelectedId(next.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+              else void finish();
+            }}
             isFirst={selected.position === 0}
             isLast={selected.position === workout.exercises.length - 1}
             onChange={updateExercise}

@@ -2,6 +2,8 @@
 
 import { progressionReasonLabel } from '@/lib/progression/completion-summary';
 import { ProgressionEvidence } from './progression-evidence';
+import { SetProgressionProposals } from './set-progression-proposals';
+import { setRoleLabel } from '@/lib/workouts/reps';
 import { History, LoaderCircle, RefreshCw, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,7 +44,7 @@ export function ExerciseProgression({
       <ul className="mt-2 space-y-1 text-sm">
         {exercise.sets.map((set) => (
           <li key={set.id}>
-            SET {set.position + 1} ·{' '}
+            SET {set.position + 1} · {setRoleLabel(set.role)} ·{' '}
             {set.targetLoadGrams === null
               ? '重量未設定'
               : `${set.targetLoadGrams / 1000} kg`}{' '}
@@ -120,7 +122,7 @@ export function ExerciseProgression({
           <p className="mt-1 text-sm font-black">
             {summary.suggestion
               ? targetLabel(summary.suggestion)
-              : '自動提案を保留'}
+              : state.recommendation.decision.setDecisions?.length ? 'セット別に提案しています' : '自動提案を保留'}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             参照：
@@ -161,6 +163,19 @@ export function ExerciseProgression({
             )}
         </div>
       </aside>
+      <SetProgressionProposals items={state.recommendation.decision.setDecisions} onAdopt={onChange ? () => {
+        if (!window.confirm('未完了セットの目標を、同じ役割のセット別提案に変更します。実績は変更しません。採用しますか？')) return;
+        const proposals = state.recommendation.decision.setDecisions ?? [];
+        onChange({ ...exercise, sets: exercise.sets.map(set => {
+          if (set.status !== 'planned') return set;
+          const role = set.role ?? 'standard';
+          const ordinal = exercise.sets.filter(candidate => (candidate.role ?? 'standard') === role && candidate.position < set.position).length;
+          const candidates = proposals.filter(candidate => (candidate.role ?? 'standard') === role);
+          const proposal = role === 'standard' ? candidates.find(candidate => candidate.position === set.position) : candidates[ordinal];
+          if (!proposal || (proposal.loadBasis ?? 'per_rep') !== (set.loadBasis ?? 'per_rep')) return set;
+          return { ...set, targetLoadGrams: proposal.targetLoadGrams, targetRepMin: proposal.targetRepMin, targetRepMax: proposal.targetRepMax };
+        }), updatedAt: new Date().toISOString() });
+      } : undefined} />
       <details className="rounded-xl border p-3">
         <summary className="cursor-pointer py-2 text-xs font-bold">
           自動提案の根拠 ·{' '}

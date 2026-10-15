@@ -1,3 +1,4 @@
+import { setMetadata } from '@/lib/workouts/reps';
 import {
   evaluateProgression,
   type ExerciseProgressionRecommendation,
@@ -46,6 +47,10 @@ type PerformanceSetRow = {
   actual_reps: number | null;
   actual_reps_left: number | null;
   actual_reps_right: number | null;
+  target_rep_min: number | null;
+  target_rep_max: number | null;
+  role: string;
+  load_basis: string;
   deleted_at: string | null;
 };
 
@@ -60,6 +65,7 @@ type ExerciseMasterRow = {
   default_working_sets: number | null;
   default_increment_grams: number | null;
   default_rest_seconds: number | null;
+  load_basis: string;
 };
 
 type CompletionWorkoutRow = {
@@ -110,7 +116,7 @@ async function getExerciseMaster(
     .prepare(
       `SELECT id, name, normalized_name, body_part, measurement_type,
               default_rep_min, default_rep_max, default_working_sets,
-              default_increment_grams, default_rest_seconds
+              default_increment_grams, default_rest_seconds, load_basis
        FROM exercise_master
        WHERE id = ? AND owner_id = ? AND archived_at IS NULL`,
     )
@@ -123,6 +129,7 @@ async function getExerciseMaster(
     normalizedName: row.normalized_name,
     bodyPart: row.body_part,
     measurementType: 'weight_reps',
+    ...(row.load_basis === 'paired_total' ? { loadBasis: 'paired_total' as const } : {}),
     defaultRepMin:
       row.default_rep_min === null ? null : Number(row.default_rep_min),
     defaultRepMax:
@@ -184,7 +191,7 @@ export async function getLatestCompletedExercisePerformance(
   const result = await db
     .prepare(
       `SELECT id, position, status, set_type, actual_load_grams,
-              actual_reps, actual_reps_left, actual_reps_right, deleted_at
+              actual_reps, actual_reps_left, actual_reps_right, role, load_basis, target_rep_min, target_rep_max, deleted_at
        FROM workout_set
        WHERE workout_exercise_id = ? AND deleted_at IS NULL
        ORDER BY position, created_at`,
@@ -199,6 +206,8 @@ export async function getLatestCompletedExercisePerformance(
     actualLoadGrams:
       set.actual_load_grams === null ? null : Number(set.actual_load_grams),
     actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      ...setMetadata(set),
+      targetRepMin: set.target_rep_min, targetRepMax: set.target_rep_max,
       ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
     deletedAt: set.deleted_at,
   }));
@@ -261,7 +270,7 @@ export async function getWorkoutCompletionProgressionSummary(
                 em.id, em.name, em.normalized_name, em.body_part,
                 em.measurement_type, em.default_rep_min, em.default_rep_max,
                 em.default_working_sets, em.default_increment_grams,
-                em.default_rest_seconds
+                em.default_rest_seconds, em.load_basis
          FROM workout_exercise we
          JOIN exercise_master em ON em.id = we.exercise_id
          WHERE we.workout_id = ?
@@ -272,7 +281,7 @@ export async function getWorkoutCompletionProgressionSummary(
     db
       .prepare(
         `SELECT ws.id, ws.workout_exercise_id, ws.position, ws.status,
-                ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
+                ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.role, ws.load_basis, ws.target_rep_min, ws.target_rep_max,
                 ws.deleted_at
          FROM workout_set ws
          JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -295,6 +304,8 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         set.actual_load_grams === null ? null : Number(set.actual_load_grams),
       actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      ...setMetadata(set),
+      targetRepMin: set.target_rep_min, targetRepMax: set.target_rep_max,
       ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
       deletedAt: set.deleted_at,
     });
@@ -316,7 +327,7 @@ export async function getWorkoutCompletionProgressionSummary(
                 w.updated_at AS workout_updated_at,
                 we.id AS workout_exercise_id, we.exercise_id,
                 ws.id, ws.position,
-                ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
+                ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.role, ws.load_basis, ws.target_rep_min, ws.target_rep_max,
                 ws.deleted_at
          FROM workout_set ws
          JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -441,6 +452,8 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         row.actual_load_grams === null ? null : Number(row.actual_load_grams),
       actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      ...setMetadata(row),
+      targetRepMin: row.target_rep_min, targetRepMax: row.target_rep_max,
       ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.deleted_at,
     });
@@ -480,6 +493,8 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         row.actual_load_grams === null ? null : Number(row.actual_load_grams),
       actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      ...setMetadata(row),
+      targetRepMin: row.target_rep_min, targetRepMax: row.target_rep_max,
       ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.deleted_at,
     });
@@ -505,6 +520,7 @@ export async function getWorkoutCompletionProgressionSummary(
         normalizedName: row.normalized_name,
         bodyPart: row.body_part,
         measurementType: 'weight_reps',
+    ...(row.load_basis === 'paired_total' ? { loadBasis: 'paired_total' as const } : {}),
         defaultRepMin:
           row.default_rep_min === null ? null : Number(row.default_rep_min),
         defaultRepMax:
@@ -575,6 +591,7 @@ export async function getWorkoutCompletionProgressionSummary(
     workoutVersion: Number(workout.version),
     totalExercises: exercises.length,
     counts: {
+      ...(exercises.some(exercise => exercise.decision.status === 'set_specific') ? { setSpecific: exercises.filter(exercise => exercise.decision.status === 'set_specific').length } : {}),
       increaseLoad: exercises.filter(
         (exercise) => exercise.decision.status === 'increase_load',
       ).length,

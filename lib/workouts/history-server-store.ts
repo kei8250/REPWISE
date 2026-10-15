@@ -1,3 +1,4 @@
+import { setMetadata } from '@/lib/workouts/reps';
 import type { ExerciseHistoryEntry, ExerciseHistoryPage } from './history';
 import type { WorkoutSet } from './types';
 
@@ -24,6 +25,8 @@ interface SetRow {
   actual_reps: number | null;
   actual_reps_left: number | null;
   actual_reps_right: number | null;
+  role: string;
+  load_basis: string;
   memo: string;
   completed_at: string | null;
   created_at: string;
@@ -89,7 +92,7 @@ export async function getExerciseHistory(
       SELECT w.id AS workout_id, we.id AS workout_exercise_id,
         w.name AS workout_name, w.local_date, w.overall_note,
         we.exercise_name_snapshot, we.note, w.ended_at AS sort_ended_at, w.started_at AS sort_started_at,
-        ROW_NUMBER() OVER (PARTITION BY ws.position ORDER BY w.local_date DESC,
+        ROW_NUMBER() OVER (PARTITION BY ws.position, ws.role, ws.load_basis ORDER BY w.local_date DESC,
           julianday(w.ended_at) DESC, julianday(w.started_at) DESC, w.id DESC, we.position) AS slot_rank
       FROM workout_exercise we JOIN workout w ON w.id = we.workout_id
       JOIN workout_set ws ON ws.workout_exercise_id = we.id
@@ -134,6 +137,7 @@ export async function getExerciseHistory(
         targetRepMax: set.target_rep_max,
         actualLoadGrams: set.actual_load_grams,
         actualReps: set.actual_reps,
+        ...setMetadata(set),
         ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
         memo: set.memo,
         completedAt: set.completed_at,

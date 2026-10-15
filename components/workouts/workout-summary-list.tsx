@@ -1,7 +1,8 @@
 'use client';
 
+import { DeletionSyncNotices } from './deletion-sync-notices';
 import { SwipeDeleteRow } from './swipe-delete-row';
-import { deleteActiveWorkout, restoreActiveWorkout } from '@/lib/workouts/draft-deletion';
+import { deleteActiveWorkout, restoreDeletedWorkout } from '@/lib/workouts/draft-deletion';
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -43,7 +44,7 @@ export function WorkoutSummaryList({
   bodyPart?: string;
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState<{ id: string; name: string; pending: boolean; failed: boolean } | null>(null);
+  const [deleted, setDeleted] = useState<{ id: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,21 +164,19 @@ export function WorkoutSummaryList({
       await deleteActiveWorkout(item.id);
       setItems(previous => previous.filter(row => row.id !== item.id));
       if (page > 0 && items.length - 1 <= page * pageSize) setPage(page - 1);
-      setDeleted({ id: item.id, name: item.name, pending: true, failed: false });
+      setDeleted({ id: item.id, name: item.name });
       const result = await syncPendingWorkoutMutations(item.id, { manual: true }).catch(() => null);
-      setDeleted(current => current?.id === item.id ? { ...current, pending: !result || result.remaining > 0, failed: !result || Boolean(result.failed) } : current);
       if (result && result.remaining === 0) load(page);
       else { setServerOffset(0); setHasMore(true); }
 
     } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : '削除を保存できませんでした'); }
     finally { setDeleting(null); }
   };
-  const undo = async () => {
-    if (!deleted || deleting) return;
-    const id = deleted.id;
+  const undo = async (id: string) => {
+    if (deleting) return;
     setDeleting(id); setDeleteError(null);
     try {
-      await restoreActiveWorkout(id);
+      await restoreDeletedWorkout(id);
       setDeleted(null);
       await syncPendingWorkoutMutations(id, { manual: true }).catch(() => undefined);
       load(page);
@@ -186,7 +185,7 @@ export function WorkoutSummaryList({
   };
   const deletionNotice = <>
     {deleteError && <p role="alert" className="rounded-xl border border-destructive p-3 text-sm text-destructive">{deleteError}</p>}
-    {deleted && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card p-3" aria-live="polite"><div className="min-w-0 text-xs"><p className="break-words font-bold">「{deleted.name}」を削除しました</p><p>{deleted.failed ? '端末で削除済み。同期状態は設定で確認できます。' : deleted.pending ? '端末で削除済み・同期待ち' : '削除を同期済み'}</p></div><Button type="button" variant="outline" className="min-h-11" disabled={deleting !== null || loadingMore} onClick={() => void undo()}>削除を取り消す</Button></div>}
+    <DeletionSyncNotices lastDeletedId={deleted?.id} disabled={deleting !== null || loadingMore} onUndo={id => void undo(id)} />
   </>;
   if (loading)
     return (
@@ -197,6 +196,7 @@ export function WorkoutSummaryList({
   if (error)
     return (
       <div className="rounded-2xl border bg-card p-6 text-center">
+        {deletionNotice}
         <AlertCircle className="mx-auto text-destructive" />
         <p className="mt-2 text-sm font-semibold">{error}</p>
         <Button type="button" variant="outline" className="mt-4" onClick={() => load()}>

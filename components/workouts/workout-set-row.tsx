@@ -16,6 +16,8 @@ import {
 } from '@/lib/workouts/reps';
 import { Textarea } from '@/components/ui/textarea';
 import type { WorkoutSet } from '@/lib/workouts/types';
+import { setAchievementLabel } from '@/lib/progression/active-workout';
+import { setRoleLabel, loadBasisLabel, loadBasisHelp } from '@/lib/workouts/reps';
 import type { SetComparison } from '@/lib/progression/active-workout';
 import { cn } from '@/lib/utils';
 import { setPerformanceLabel } from '@/lib/workouts/history';
@@ -93,7 +95,9 @@ export function WorkoutSetRow({
         (value) =>
           Number.isInteger(value) && (value ?? 0) >= 1 && (value ?? 0) <= 999,
       ));
+  const achievement = setAchievementLabel(set);
   const fieldId = (field: string) => `${set.id}-${field}`;
+  if (set.status === 'skipped' && !editing) return <div className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm"><p>SET {number} · {setRoleLabel(set.role)} · 未実施（スキップ）</p><Button type="button" variant="outline" className="min-h-11" onClick={() => patch({ status: 'planned', completedAt: null })}>このセットを再開</Button></div>;
   if (completed && !editing)
     return (
       <div className="rounded-2xl border border-primary/30 bg-primary/5 p-3">
@@ -113,10 +117,7 @@ export function WorkoutSetRow({
         {set.targetLoadGrams !== null && set.targetRepMin !== null && (
           <p className="mt-1 text-xs">
             今回の結果：
-            {set.actualLoadGrams! >= set.targetLoadGrams &&
-            set.actualReps! >= set.targetRepMin
-              ? '目標下限を達成'
-              : '目標下限まであと一歩'}
+            {achievement}
           </p>
         )}
         {set.memo && (
@@ -193,7 +194,12 @@ export function WorkoutSetRow({
         </Button>
       )}
       <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-xs">
-        {historyStatus === 'loading' ? (
+        <label htmlFor={fieldId('role')} className="mb-2 block text-xs font-bold">セットの役割（同じ役割の前回実績と比較）</label>
+      <select id={fieldId('role')} aria-label={`セット${number}の役割`} value={set.role ?? 'standard'} onChange={event => patch({ role: event.target.value === 'top' ? 'top' : event.target.value === 'backoff' ? 'backoff' : 'standard' })} className="mb-3 min-h-11 w-full rounded-lg border bg-background px-3 text-base">
+        <option value="standard">通常（セット順で比較）</option><option value="top">トップセット</option><option value="backoff">バックオフセット</option>
+      </select>
+      {perSide && <p className="mb-3 leading-relaxed text-muted-foreground">{loadBasisHelp(set.loadBasis)}</p>}
+      {historyStatus === 'loading' ? (
           <p className="text-muted-foreground">このセットの過去記録を確認中…</p>
         ) : historyStatus === 'error' ? (
           <p className="text-muted-foreground">
@@ -339,7 +345,7 @@ export function WorkoutSetRow({
             htmlFor={fieldId('actual-load')}
             className="text-xs font-semibold text-muted-foreground"
           >
-            重量（kg）{perSide ? ' · 左右共通' : ''}
+            重量（kg）{perSide ? ` · 左右共通・${loadBasisLabel(set.loadBasis)}` : ''}
           </label>
           <ValidatedNumberInput
             id={fieldId('actual-load')}
@@ -442,15 +448,8 @@ export function WorkoutSetRow({
         set.targetRepMin !== null && (
           <p className="mt-2 text-xs font-bold">
             {completed ? '今回の結果' : '入力中の実績'}：
-            {set.actualLoadGrams! >= set.targetLoadGrams &&
-            set.actualReps! >= set.targetRepMin
-              ? '目標下限を達成'
-              : '目標下限まであと一歩'}
-            {set.targetRepMax !== null &&
-            set.actualLoadGrams! >= set.targetLoadGrams &&
-            set.actualReps! >= set.targetRepMax
-              ? ' · 上限回数も達成'
-              : ''}
+            {achievement}
+
           </p>
         )}
       {comparison.label && (

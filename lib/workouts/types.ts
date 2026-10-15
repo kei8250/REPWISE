@@ -1,4 +1,4 @@
-import type { RepMode } from './reps';
+import type { RepMode, LoadBasis, SetRole } from './reps';
 export type WorkoutStatus = 'draft' | 'active' | 'completed' | 'abandoned';
 export type WorkoutExerciseStatus =
   | 'planned'
@@ -8,6 +8,7 @@ export type WorkoutExerciseStatus =
 export type WorkoutSetStatus = 'planned' | 'completed' | 'skipped';
 
 export interface ExerciseMaster {
+  loadBasis?: LoadBasis;
   id: string;
   name: string;
   normalizedName: string;
@@ -22,6 +23,8 @@ export interface ExerciseMaster {
 }
 
 export interface WorkoutSet {
+  loadBasis?: LoadBasis;
+  role?: SetRole;
   id: string;
   position: number;
   status: WorkoutSetStatus;
@@ -96,13 +99,14 @@ export interface CreateWorkoutInput {
 }
 
 export interface CreateExerciseMasterInput {
+  loadBasis?: LoadBasis;
   repMode?: RepMode;
   id?: string;
   name: string;
   bodyPart: string;
 }
 
-export type UpdateExerciseMasterInput = Pick<ExerciseMaster, 'name' | 'bodyPart' | 'defaultRepMin' | 'defaultRepMax' | 'defaultWorkingSets' | 'defaultIncrementGrams' | 'defaultRestSeconds' | 'repMode'>;
+export type UpdateExerciseMasterInput = Pick<ExerciseMaster, 'name' | 'bodyPart' | 'defaultRepMin' | 'defaultRepMax' | 'defaultWorkingSets' | 'defaultIncrementGrams' | 'defaultRestSeconds' | 'repMode' | 'loadBasis'>;
 
 export type WorkoutMutationOperation =
   | 'create'

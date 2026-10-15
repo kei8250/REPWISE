@@ -1,5 +1,7 @@
 'use client';
 
+import { SetProgressionProposals } from '@/components/workouts/set-progression-proposals';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -155,7 +157,7 @@ function acceptedTargetText(exercise: ExerciseAnalytics) {
 
 function progressionTone(status: ExerciseAnalytics['progression']['status']) {
   if (status === 'increase_load') return 'bg-emerald-100 text-emerald-800';
-  if (status === 'keep_load') return 'bg-blue-100 text-blue-800';
+  if (status === 'keep_load' || status === 'set_specific') return 'bg-blue-100 text-blue-800';
   return 'bg-muted text-muted-foreground';
 }
 
@@ -351,6 +353,8 @@ export function AnalyticsDataView({
                   </div>
                 </div>
 
+                <SetProgressionProposals items={selectedExercise.progression.setDecisions} />
+                <p className="mt-3 text-xs text-muted-foreground">左右別の最大重量・推定1RMは片側1回の負荷に換算します。ボリュームは保存した重量基準と左右の回数から計算します。</p>
                 {acceptedTargetText(selectedExercise) && (
                   <div className="mt-4 flex items-start gap-3 rounded-2xl bg-primary/[0.06] p-4">
                     <Target className="mt-0.5 size-5 shrink-0 text-primary" />

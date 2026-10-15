@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
+import { prepareExerciseCompletion } from '@/lib/workouts/completion';
+import { reportInvalidWorkoutInput } from './validated-number-input';
 import { ArrowDown, ArrowUp, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,7 +17,7 @@ import { ExerciseSettingsReference } from './exercise-settings-reference';
 import { WorkoutSetRow } from './workout-set-row';
 import { ExerciseProgression } from './exercise-progression';
 import { useExerciseHistory } from '@/hooks/use-exercise-history';
-import { referenceAt } from '@/lib/workouts/history';
+import { referenceForSet } from '@/lib/workouts/history';
 import { ExerciseHistory } from './exercise-history';
 
 export function WorkoutExercise({
@@ -29,6 +32,8 @@ export function WorkoutExercise({
   onChange,
   onDelete,
   onMove,
+  onFinished,
+  nextActionLabel,
 }: {
   exercise: WorkoutExerciseType;
   workoutId: string;
@@ -41,7 +46,11 @@ export function WorkoutExercise({
   onChange: (exercise: WorkoutExerciseType) => void;
   onDelete: () => void;
   onMove: (direction: -1 | 1) => void;
+  onFinished?: () => void;
+  nextActionLabel?: string;
 }) {
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const focusCompletedAction = useRef(false);
   const history = useExerciseHistory(
     exercise.exerciseId,
     localDate,
@@ -53,6 +62,7 @@ export function WorkoutExercise({
     const justCompleted = next.status === 'completed' && exercise.sets.find(set => set.id === next.id)?.status !== 'completed';
     onChange({
       ...exercise,
+      ...(next.status === 'planned' && ['completed', 'skipped'].includes(exercise.status) ? { status: 'in_progress' as const, completedAt: null } : {}),
       sets: exercise.sets.map((set) => (set.id === next.id ? next : set)),
       updatedAt: new Date().toISOString(),
     });
@@ -78,10 +88,17 @@ export function WorkoutExercise({
       updatedAt: new Date().toISOString(),
     });
   };
-  const nextSet = exercise.sets.find(set => set.status !== 'completed' && set.status !== 'skipped');
-  const completed = exercise.status === 'completed';
+  const nextSet = exercise.status === 'completed' || exercise.status === 'skipped' ? undefined : exercise.sets.find(set => set.status !== 'completed' && set.status !== 'skipped');
+  const completed = exercise.status === 'completed' || exercise.status === 'skipped';
+  useEffect(() => {
+    if (!completed || !focusCompletedAction.current) return;
+    focusCompletedAction.current = false;
+    const panel = document.getElementById(`exercise-completed-${exercise.id}`);
+    panel?.scrollIntoView({ behavior: 'instant', block: 'center' });
+    panel?.querySelector('button')?.focus({ preventScroll: true });
+  }, [completed, exercise.id]);
   return (
-    <section className="space-y-3">
+    <section id={`exercise-${exercise.id}`} className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold text-primary">
@@ -149,7 +166,7 @@ export function WorkoutExercise({
       <ExerciseHistory history={history} />
       <div className="space-y-3">
         {exercise.sets.map((set, index) => {
-          const reference = referenceAt(history.references ?? history.items, set.position);
+          const reference = referenceForSet(history.references ?? history.items, set, exercise.sets);
           const previous = reference?.set;
           return (
             <WorkoutSetRow
@@ -168,7 +185,7 @@ export function WorkoutExercise({
                 set: reference.set, exerciseNote: reference.entry.note,
               }] : []}
               recentRecord={history.items[0]}
-              isNext={set.id === exercise.sets.find(item => item.status !== 'completed' && item.status !== 'skipped')?.id}
+              isNext={set.id === nextSet?.id}
               historyStatus={history.status}
               comparison={compareWorkingSet(
                 {
@@ -211,18 +228,27 @@ export function WorkoutExercise({
         placeholder="この種目全体のメモ（任意）"
         className="min-h-20 resize-none"
       />
+      {completionError && <p role="alert" className="text-sm text-destructive">{completionError}</p>}
+      {completed && <div id={`exercise-completed-${exercise.id}`} className="space-y-3">
+        <output className="block rounded-xl bg-primary/10 p-3 text-sm font-bold">{exercise.status === 'skipped' ? 'この種目は未実施で終了しました。' : 'この種目は完了しました。未実施セットはスキップ済みです。'}</output>
+        {onFinished && <Button type="button" className="min-h-11 w-full" onClick={onFinished}>{nextActionLabel ?? '次へ進む'}</Button>}
+      </div>}
       <Button
         type="button"
         variant={completed ? 'outline' : 'secondary'}
         className="h-11 w-full rounded-xl"
-        onClick={() =>
-          onChange({
-            ...exercise,
-            status: completed ? 'in_progress' : 'completed',
-            completedAt: completed ? null : new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          })
-        }
+        onClick={() => {
+          if (completed) { onChange({ ...exercise, status: 'in_progress', completedAt: null }); return; }
+          if (reportInvalidWorkoutInput(document.getElementById(`exercise-${exercise.id}`) ?? document)) return;
+          try {
+            const next = prepareExerciseCompletion(exercise);
+            const skipped = next.sets.filter(set => set.status === 'skipped' && exercise.sets.find(original => original.id === set.id)?.status !== 'skipped').length;
+            if (skipped && !window.confirm(`未入力の${skipped}セットを未実施としてスキップし、この種目を終了しますか？入力済みの有効なセットは完了として保存します。`)) return;
+            setCompletionError(null);
+            focusCompletedAction.current = true;
+            onChange(next);
+          } catch (cause) { setCompletionError(cause instanceof Error ? cause.message : '入力を確認してください'); }
+        }}
       >
         <CheckCircle2 /> {completed ? '種目を再開する' : 'この種目を完了'}
       </Button>

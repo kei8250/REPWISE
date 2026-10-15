@@ -147,10 +147,11 @@ describe('Phase 3A double progression', () => {
     input.sets[1].actualLoadGrams = 97_500;
 
     expect(evaluateProgression(input, profile)).toMatchObject({
-      status: 'insufficient_data',
-      reasonCode: 'inconsistent_load',
+      status: 'set_specific',
+      reasonCode: 'set_specific_progression',
       nextTarget: null,
     });
+    expect(evaluateProgression(input, profile).setDecisions?.map(set => set.targetLoadGrams)).toEqual([102500, 100000, 102500]);
   });
 
   it('I: 永続キャッシュを使わず編集後の入力から再評価する', () => {

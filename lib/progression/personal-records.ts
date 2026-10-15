@@ -1,4 +1,4 @@
-import { totalReps } from '@/lib/workouts/reps';
+import { totalReps, effectiveLoadGrams } from '@/lib/workouts/reps';
 import type { ProgressionPerformanceSet } from './engine';
 
 export const E1RM_MAX_REPS = 12;
@@ -100,12 +100,12 @@ export function evaluatePersonalRecords(
     (set) => (set.actualReps as number) <= E1RM_MAX_REPS,
   );
   const currentMaxLoad = maxOrNull(
-    currentSets.map((set) => set.actualLoadGrams as number),
+    currentSets.map((set) => effectiveLoadGrams(set) as number),
   );
   const currentMaxE1rm = maxOrNull(
     currentEligibleE1rmSets.map((set) =>
       calculateE1rmGrams(
-        set.actualLoadGrams as number,
+        effectiveLoadGrams(set) as number,
         set.actualReps as number,
       ),
     ),
@@ -116,12 +116,12 @@ export function evaluatePersonalRecords(
     0,
   );
   const previousMaxLoad = maxOrNull(
-    historicalSets.map((set) => set.actualLoadGrams as number),
+    historicalSets.map((set) => effectiveLoadGrams(set) as number),
   );
   const previousMaxE1rm = maxOrNull(
     historicalEligibleE1rmSets.map((set) =>
       calculateE1rmGrams(
-        set.actualLoadGrams as number,
+        effectiveLoadGrams(set) as number,
         set.actualReps as number,
       ),
     ),
@@ -166,7 +166,7 @@ export function evaluatePersonalRecords(
 
   const currentBestRepsByLoad = new Map<number, number>();
   for (const set of currentSets) {
-    const loadGrams = set.actualLoadGrams as number;
+    const loadGrams = effectiveLoadGrams(set) as number;
     currentBestRepsByLoad.set(
       loadGrams,
       Math.max(
@@ -179,7 +179,7 @@ export function evaluatePersonalRecords(
     .map(([loadGrams, reps]) => {
       const previousBestReps = maxOrNull(
         historicalSets
-          .filter((set) => set.actualLoadGrams === loadGrams)
+          .filter((set) => effectiveLoadGrams(set) === loadGrams)
           .map((set) => set.actualReps as number),
       );
       return previousBestReps !== null && reps > previousBestReps

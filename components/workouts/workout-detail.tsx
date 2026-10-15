@@ -316,7 +316,10 @@ export function WorkoutDetail({ id }: { id: string }) {
     return (
       <div className="grid min-h-72 place-items-center">
         {error ? (
-          <p className="text-sm font-bold text-destructive">{error}</p>
+          <div className="p-6 text-center">
+            <p className="text-sm font-bold text-destructive">{error}</p>
+            <a href={APP_ROUTES.history} className="mt-4 block min-h-11 p-3 font-bold text-primary">履歴へ戻る</a>
+          </div>
         ) : (
           <LoaderCircle className="animate-spin text-primary" />
         )}

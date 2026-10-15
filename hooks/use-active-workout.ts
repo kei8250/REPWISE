@@ -206,7 +206,9 @@ export function useActiveWorkout(id: string) {
             ? initial.server.reason
             : new Error('ワークアウトを読み込めませんでした');
         setError(
-          cause instanceof Error ? cause.message : '読み込みに失敗しました',
+          localDraft?.draftStatus === 'deleted' || localDraft?.workout.deletedAt
+            ? 'このトレーニングは削除済みです。'
+            : cause instanceof Error ? cause.message : '読み込みに失敗しました',
         );
         setSaveState('error');
         setLocalSaveState(localDraft ? 'saved' : 'error');

@@ -1,16 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ja } from 'date-fns/locale';
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose } from '@/components/ui/dialog';
 import { listWorkouts } from '@/lib/workouts/api-client';
 import { localDateKey } from '@/lib/workouts/history';
 import type { WorkoutSummary } from '@/lib/workouts/types';
-import { APP_ROUTES, navigateTo } from '@/lib/routes';
+import { navigateTo, workoutRoute } from '@/lib/routes';
 import { useLocalToday } from '@/hooks/use-local-today';
 import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
 import { mergeVisibleWorkouts } from '@/lib/workouts/visible-workouts';
+
+export function workoutsOnDate(items: WorkoutSummary[], date: string) {
+  return items.filter((item) => item.localDate === date).sort((a, b) => b.startedAt.localeCompare(a.startedAt) || a.id.localeCompare(b.id));
+}
 
 export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelectDate }: {
   month?: Date;
@@ -21,6 +26,9 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
   const [selectedMonth, setMonth] = useState<Date | null>(null);
   const month = controlledMonth ?? selectedMonth ?? new Date(`${today || '2000-01-01'}T12:00:00`);
   const [attempt, setAttempt] = useState(0);
+  const [selectedDay, setSelectedDay] = useState<{ from: string; date: string } | null>(null);
+  const calendarRoot = useRef<HTMLDivElement>(null);
+  const selectedDayLabel = useRef<string | null>(null);
   const from = localDateKey(new Date(month.getFullYear(), month.getMonth(), 1));
   const to = localDateKey(
     new Date(month.getFullYear(), month.getMonth() + 1, 0),
@@ -57,6 +65,7 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
     };
   }, [from, to, attempt, today]);
   const loading = state.from !== from;
+  const selectedWorkouts = selectedDay?.from === from && !loading ? workoutsOnDate(state.items, selectedDay.date) : [];
   const counts = new Map<string, number>();
   if (!loading)
     for (const item of state.items)
@@ -83,7 +92,7 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
           日付を押して、その日のセットとメモを振り返る
         </p>
       </div>
-      <div className="mx-auto max-w-md">
+      <div ref={calendarRoot} className="mx-auto max-w-md">
         <Calendar
           locale={ja}
           month={month}
@@ -98,17 +107,48 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
           }}
           labels={{
             labelDayButton: (date) =>
-              `${date.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}、${counts.get(localDateKey(date)) ?? 0}件の完了したトレーニング、履歴を開く`,
+              `${date.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })}、${counts.get(localDateKey(date)) ?? 0}件の完了したトレーニング、${onSelectDate ? '履歴を絞り込む' : '記録を開く'}`,
           }}
-          onDayClick={(date) => onSelectDate ? onSelectDate(localDateKey(date)) : navigateTo(`${APP_ROUTES.history}?date=${localDateKey(date)}`)}
+          disabled={onSelectDate ? undefined : (date) => !counts.has(localDateKey(date))}
+          onDayClick={(date, _modifiers, event) => {
+            const key = localDateKey(date);
+            if (onSelectDate) { onSelectDate(key); return; }
+            const matches = workoutsOnDate(state.items, key);
+            if (matches.length === 1) navigateTo(workoutRoute(matches[0].id, matches[0].status));
+            else if (matches.length > 1) {
+              selectedDayLabel.current = event.currentTarget.getAttribute('data-day');
+              setSelectedDay({ from, date: key });
+            }
+          }}
         />
       </div>
+      <Dialog open={selectedWorkouts.length > 1} onOpenChange={(open) => { if (!open) setSelectedDay(null); }}>
+        <DialogContent
+          showCloseButton={false}
+          finalFocus={() => Array.from(calendarRoot.current?.querySelectorAll<HTMLButtonElement>('button[data-day]') ?? []).find((button) => button.dataset.day === selectedDayLabel.current) ?? false}
+          className="max-h-[80dvh] overflow-y-auto"
+        >
+          <DialogTitle className="text-lg font-black">{selectedDay?.date}の記録</DialogTitle>
+          <DialogDescription>この日は複数のトレーニングがあります。開く記録を選んでください。</DialogDescription>
+          <ul className="space-y-2">
+            {selectedWorkouts.map((item) => (
+              <li key={item.id}>
+                <a href={workoutRoute(item.id, item.status)} className="block min-h-11 rounded-xl border p-3 hover:bg-muted">
+                  <span className="block break-words font-bold">{item.name}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{new Date(item.startedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} · {item.exerciseCount}種目 · {item.completedSetCount}セット完了</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          <DialogClose render={<Button variant="outline" className="min-h-11" />}>カレンダーへ戻る</DialogClose>
+        </DialogContent>
+      </Dialog>
       <div className="mt-3 text-sm text-muted-foreground" aria-live="polite">
         {loading ? (
           '記録のある日を確認中…'
         ) : state.status === 'error' ? (
           <div>
-            <p>記録のある日を取得できませんでした。日付から履歴は開けます。</p>
+            <p>サーバーの記録を取得できませんでした。この端末で確認できる記録を表示しています。</p>
             <Button
               type="button"
               size="sm"

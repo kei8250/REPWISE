@@ -6,7 +6,6 @@ import { cn } from '@/lib/utils';
 import {
   APP_ROUTES,
   DESKTOP_NAVIGATION,
-  PRIMARY_NAVIGATION,
 } from '@/lib/routes';
 
 const navigationIcons = {
@@ -19,21 +18,12 @@ const navigationIcons = {
 
 export function AppShell({
   children,
-  activeMode = false,
 }: {
   children: React.ReactNode;
-  activeMode?: boolean;
 }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
-
-  if (activeMode)
-    return (
-      <main className="min-h-screen bg-background text-foreground">
-        {children}
-      </main>
-    );
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -82,10 +72,10 @@ export function AppShell({
         <section className="min-w-0 flex-1 pb-24 lg:pb-8">{children}</section>
       </div>
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-card/95 px-4 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-border bg-card/95 px-4 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden"
         aria-label="モバイルナビゲーション"
       >
-        {PRIMARY_NAVIGATION.map(({ key, href, label }) => {
+        {DESKTOP_NAVIGATION.map(({ key, href, label }) => {
           const Icon = navigationIcons[key];
           return (
             <a

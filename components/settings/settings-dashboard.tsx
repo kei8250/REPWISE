@@ -12,7 +12,8 @@ import type {
   ExerciseMaster,
   UpdateExerciseMasterInput,
 } from '@/lib/workouts/types';
-import { workoutRoute } from '@/lib/routes';
+import { summarizeSyncQueue } from '@/lib/workouts/sync-overview';
+import { WorkoutSyncList } from './workout-sync-list';
 
 function subscribeSettings(update: () => void) {
   window.addEventListener('storage', update);
@@ -158,9 +159,9 @@ export function SettingsDashboard() {
     }
   };
   const exercise = items.find((item) => item.id === selected);
-  const queuedIds = [
-    ...new Set(local?.mutations.map((item) => item.workoutId) ?? []),
-  ];
+  const queueEntries = summarizeSyncQueue(local?.drafts ?? [], local?.mutations ?? []);
+  const visibleEntries = queueEntries.filter((entry) => !entry.deleted);
+  const deletedEntries = queueEntries.filter((entry) => entry.deleted);
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-7">
       <section className="rounded-3xl border bg-card p-5">
@@ -197,67 +198,23 @@ export function SettingsDashboard() {
           <p className="mt-3 text-sm">
             端末の保存済み記録：
             {
-              local.drafts.filter((item) => item.draftStatus !== 'deleted')
+              local.drafts.filter((item) => item.draftStatus !== 'deleted' && !item.workout.deletedAt)
                 .length
             }
-            件 · 未同期：{queuedIds.length}件
+            件 · 未同期：{visibleEntries.length}件 · 削除の反映待ち：{deletedEntries.length}件
           </p>
         )}
         <div className="mt-4 space-y-3">
-          {queuedIds.map((id) => {
-            const draft = local?.drafts.find((item) => item.workoutId === id);
-            const queue =
-              local?.mutations
-                .filter((item) => item.workoutId === id)
-                .sort((a, b) => a.sequence - b.sequence) ?? [];
-            const head = queue[0];
-            const label =
-              head?.syncStatus === 'conflict'
-                ? '別の変更と競合しています'
-                : head?.syncStatus === 'blocked'
-                  ? '同期を停止中・内容を確認してください'
-                  : head?.syncStatus === 'failed'
-                    ? '同期失敗・記録は端末に保存済み'
-                    : head?.syncStatus === 'syncing'
-                      ? '同期中'
-                      : '端末に保存済み・同期待ち';
-            return (
-              <div key={id} className="rounded-xl bg-muted/50 p-3">
-                <p className="font-bold">
-                  {draft?.workout.name ?? 'トレーニング記録'}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {label} · {queue.length}件の変更
-                </p>
-                {head?.lastError && (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-sm text-destructive">
-                    {head.lastError}
-                  </p>
-                )}
-                <div className="mt-3 flex flex-wrap gap-3">
-                  {draft && (
-                    <a
-                      className="self-center text-sm font-bold text-primary"
-                      href={workoutRoute(id, draft.workout.status)}
-                    >
-                      記録を確認
-                    </a>
-                  )}
-                  {head?.syncStatus !== 'conflict' && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={busy !== null || head?.syncStatus === 'syncing'}
-                      onClick={() => void retrySync(id)}
-                    >
-                      {busy === id ? '再試行中…' : '同期を再試行'}
-                    </Button>
-                  )}
-                </div>
+          <WorkoutSyncList entries={visibleEntries} busy={busy} onRetry={(id) => void retrySync(id)} />
+          {deletedEntries.length > 0 && (
+            <details className="rounded-xl border p-3">
+              <summary className="min-h-11 cursor-pointer py-3 font-bold">削除の反映待ち（{deletedEntries.length}件）</summary>
+              <p className="mb-3 text-sm text-muted-foreground">削除済みの記録は開けません。通信が回復すると、それ以前の未同期の変更に続いて削除を反映します。</p>
+              <div className="space-y-3">
+                <WorkoutSyncList entries={deletedEntries} busy={busy} onRetry={(id) => void retrySync(id)} />
               </div>
-            );
-          })}
+            </details>
+          )}
         </div>
         <Button
           type="button"

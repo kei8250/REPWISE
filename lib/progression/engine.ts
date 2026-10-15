@@ -1,9 +1,14 @@
-import { effectiveReps } from '@/lib/workouts/reps';
+import {
+  effectiveReps,
+  type LoadBasis,
+  type SetRole,
+} from '@/lib/workouts/reps';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 
 export type ProgressionType = 'double_progression';
 
 export interface ProgressionProfile {
+  loadBasis?: LoadBasis;
   exerciseId: string;
   repMin: number;
   repMax: number;
@@ -17,6 +22,10 @@ export type ProgressionProfileOverride = Partial<
 >;
 
 export interface ProgressionPerformanceSet {
+  role?: SetRole;
+  loadBasis?: LoadBasis;
+  targetRepMin?: number | null;
+  targetRepMax?: number | null;
   id: string;
   position: number;
   status: string;
@@ -44,6 +53,7 @@ export interface ProgressionExercisePerformance {
 export type ProgressionDecisionStatus =
   | 'increase_load'
   | 'keep_load'
+  | 'set_specific'
   | 'insufficient_data';
 
 export type ProgressionReasonCode =
@@ -59,7 +69,9 @@ export type ProgressionReasonCode =
   | 'working_set_count_mismatch'
   | 'incomplete_working_set'
   | 'invalid_actuals'
-  | 'inconsistent_load';
+  | 'inconsistent_load'
+  | 'set_specific_progression'
+  | 'load_basis_changed';
 
 export interface ProgressionTargetSet {
   position: number;
@@ -76,7 +88,22 @@ export interface ProgressionTarget {
   sets: ProgressionTargetSet[];
 }
 
+export interface SetProgressionDecision {
+  actualRepsLeft?: number | null;
+  actualRepsRight?: number | null;
+  position: number;
+  role?: SetRole;
+  loadBasis?: LoadBasis;
+  currentLoadGrams: number;
+  actualReps: number;
+  targetLoadGrams: number;
+  targetRepMin: number;
+  targetRepMax: number;
+  increase: boolean;
+}
+
 export interface ProgressionDecision {
+  setDecisions?: SetProgressionDecision[];
   status: ProgressionDecisionStatus;
   reasonCode: ProgressionReasonCode;
   currentLoadGrams: number | null;
@@ -99,6 +126,7 @@ export function resolveProgressionProfile(
 ): ProgressionProfile | null {
   const profile: ProgressionProfile = {
     exerciseId: exercise.id,
+    ...(exercise.loadBasis ? { loadBasis: exercise.loadBasis } : {}),
     repMin: override.repMin ?? exercise.defaultRepMin ?? 0,
     repMax: override.repMax ?? exercise.defaultRepMax ?? 0,
     workingSets: override.workingSets ?? exercise.defaultWorkingSets ?? 0,
@@ -175,6 +203,68 @@ export function evaluateProgression(
   const workingSets = performance.sets
     .filter((set) => !set.deletedAt && set.setType === 'working')
     .sort((a, b) => a.position - b.position);
+  const validCompleted = workingSets.filter(
+    (set) =>
+      set.status === 'completed' &&
+      Number.isInteger(set.actualLoadGrams) &&
+      (set.actualLoadGrams ?? 0) > 0 &&
+      Number.isInteger(effectiveReps(set)) &&
+      (effectiveReps(set) ?? 0) > 0,
+  );
+  const loads = new Set(validCompleted.map((set) => set.actualLoadGrams));
+  if (
+    workingSets.some((set) => set.role && set.role !== 'standard') ||
+    loads.size > 1
+  ) {
+    if (!validCompleted.length)
+      return insufficient('invalid_actuals', performance);
+    if (
+      validCompleted.some(
+        (set) =>
+          (set.loadBasis ?? 'per_rep') !== (profile.loadBasis ?? 'per_rep'),
+      )
+    )
+      return insufficient('load_basis_changed', performance);
+    const setDecisions = validCompleted.map((set) => {
+      const validRange =
+        set.targetRepMin != null &&
+        set.targetRepMax != null &&
+        set.targetRepMin > 0 &&
+        set.targetRepMax >= set.targetRepMin;
+      const min = validRange ? set.targetRepMin! : profile.repMin;
+      const max = validRange ? set.targetRepMax! : profile.repMax;
+      const actualReps = effectiveReps(set)!;
+      const increase = actualReps >= max;
+      return {
+        position: set.position,
+        ...(set.role ? { role: set.role } : {}),
+        ...(set.loadBasis ? { loadBasis: set.loadBasis } : {}),
+        ...(set.actualRepsLeft != null || set.actualRepsRight != null
+          ? {
+              actualRepsLeft: set.actualRepsLeft,
+              actualRepsRight: set.actualRepsRight,
+            }
+          : {}),
+        currentLoadGrams: set.actualLoadGrams!,
+        actualReps,
+        targetLoadGrams:
+          set.actualLoadGrams! + (increase ? profile.incrementGrams : 0),
+        targetRepMin: min,
+        targetRepMax: max,
+        increase,
+      };
+    });
+    return {
+      status: 'set_specific',
+      reasonCode: 'set_specific_progression',
+      currentLoadGrams: null,
+      nextTarget: null,
+      setDecisions,
+      evaluatedSetIds: validCompleted.map((set) => set.id),
+      sourceWorkoutId: performance.workoutId,
+      sourceWorkoutVersion: performance.workoutVersion,
+    };
+  }
   if (workingSets.length !== profile.workingSets)
     return insufficient('working_set_count_mismatch', performance);
   if (workingSets.some((set) => set.status !== 'completed'))
@@ -190,8 +280,13 @@ export function evaluateProgression(
   )
     return insufficient('invalid_actuals', performance);
 
-  const loads = new Set(workingSets.map((set) => set.actualLoadGrams));
-  if (loads.size !== 1) return insufficient('inconsistent_load', performance);
+  if (
+    workingSets.some(
+      (set) =>
+        (set.loadBasis ?? 'per_rep') !== (profile.loadBasis ?? 'per_rep'),
+    )
+  )
+    return insufficient('load_basis_changed', performance);
 
   const currentLoadGrams = workingSets[0].actualLoadGrams as number;
   const reps = workingSets.map((set) => effectiveReps(set) as number);

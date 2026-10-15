@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyWorkoutMutation,
   getWorkout,
@@ -211,6 +211,7 @@ beforeEach(() => {
     '0004_grey_kinsey_walden.sql',
     '0005_neat_molly_hayes.sql',
     '0006_side_repetitions.sql',
+    '0007_set_roles_and_load_basis.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),
@@ -815,4 +816,55 @@ it('個別セットAPIと置換APIも左右回数とsnapshotの方式を保持�
   const replacement = await replaceWorkout(d1, updated);
   expect(replacement.exercises[0].repMode).toBe('per_side');
   expect(replacement.exercises[0].sets[0]).toMatchObject({ actualRepsLeft: 10, actualRepsRight: 12 });
+});
+
+
+it('HTTP入口からactiveの削除・復元・再削除と同一要求の再送を通し、完了状態へ変えない', async () => {
+  vi.doMock('@/db', () => ({ getD1: () => d1 }));
+  try {
+    const { POST } = await import('@/app/api/v2/sync/route');
+    async function post(input: WorkoutMutationInput) {
+      const response = await POST(new Request('http://fixture.test/api/v2/sync', { method: 'POST', body: JSON.stringify(input), headers: { 'Content-Type': 'application/json' } }));
+      expect(response.status).toBe(200);
+      return await response.json() as { workout: Workout; duplicate: boolean };
+    }
+    const created = await post(mutation('http-create', 'create', workout()));
+    const deleted = await post(mutation('http-delete', 'delete', { ...created.workout, deletedAt: timestamp }));
+    const restored = await post(mutation('http-restore', 'restore', { ...deleted.workout, deletedAt: null }));
+    const request = mutation('http-delete-again', 'delete', { ...restored.workout, deletedAt: timestamp });
+    const deletedAgain = await post(request);
+    expect(deletedAgain.workout).toMatchObject({ status: 'active', endedAt: null, version: 4 });
+    expect((await post(request)).duplicate).toBe(true);
+    expect(await listWorkouts(d1, 'active')).toEqual([]);
+  } finally { vi.doUnmock('@/db'); }
+});
+
+it('役割・回数目標・重量基準をSQLと履歴・判定・分析・コピーまで保持する', async () => {
+  const { createExerciseMaster } = await import('@/lib/workouts/server-store');
+  const { validateWorkoutSnapshot } = await import('@/lib/workouts/validation');
+  const { getExerciseHistory } = await import('@/lib/workouts/history-server-store');
+  const { getWorkoutCompletionProgressionSummary } = await import('@/lib/progression/server-store');
+  const { getAnalyticsSnapshot } = await import('@/lib/analytics/server-store');
+  const master = await createExerciseMaster(d1, { id: 'basis-master', name: '重量基準テスト', bodyPart: '背中', repMode: 'per_side', loadBasis: 'paired_total' });
+  expect(master.loadBasis).toBe('paired_total');
+  const snapshot = workout();
+  snapshot.exercises[0].exerciseId = master.id;
+  snapshot.exercises[0].repMode = 'per_side';
+  snapshot.exercises[0].sets = [0, 1, 2].map(position => ({ ...set(`basis-${position}`, position), role: position === 0 ? 'top' : 'backoff', loadBasis: 'paired_total', actualLoadGrams: position === 0 ? 40000 : 30000, actualReps: 8, actualRepsLeft: 8, actualRepsRight: 10, targetRepMin: 6, targetRepMax: position === 0 ? 8 : 12 }));
+  const created = await applyWorkoutMutation(d1, mutation('basis-create', 'create', validateWorkoutSnapshot(snapshot)));
+  const completed = await applyWorkoutMutation(d1, mutation('basis-complete', 'complete', { ...created.workout, status: 'completed', endedAt: timestamp, exercises: created.workout.exercises.map(exercise => ({ ...exercise, status: 'completed' })) }));
+  expect((await getWorkout(d1, snapshot.id))?.exercises[0].sets[0]).toMatchObject({ role: 'top', loadBasis: 'paired_total', targetRepMax: 8 });
+  expect((await getExerciseHistory(d1, master.id)).references?.[0].sets[1]).toMatchObject({ role: 'backoff', loadBasis: 'paired_total', targetRepMax: 12 });
+  const summary = await getWorkoutCompletionProgressionSummary(d1, snapshot.id);
+  expect(summary.exercises[0].decision.reasonCode).toBe('set_specific_progression');
+  expect(summary.exercises[0].decision.setDecisions?.map(set => set.targetLoadGrams)).toEqual([42500, 30000, 30000]);
+  const expectedVolume = (40000 + 30000 + 30000) * 18 / 2;
+  expect(summary.exercises[0].personalRecords.current.totalVolumeGramReps).toBe(expectedVolume);
+  expect(summary.exercises[0].personalRecords.current.maxLoadGrams).toBe(20000);
+  expect((await listWorkouts(d1, 'completed'))[0].totalVolumeGrams).toBe(expectedVolume);
+  expect((await getAnalyticsSnapshot(d1, 'all', new Date('2026-10-15T00:00:00Z'))).workouts.totalVolumeGramReps).toBe(expectedVolume);
+  expect(copyWorkoutForToday(completed.workout).exercises[0].sets[0]).toMatchObject({ role: 'top', loadBasis: 'paired_total', actualLoadGrams: null });
+  const { updateExerciseMaster } = await import('@/lib/workouts/exercise-settings-store');
+  await updateExerciseMaster(d1, master.id, { ...master, loadBasis: 'per_rep' });
+  expect((await getWorkout(d1, snapshot.id))?.exercises[0].sets[0].loadBasis).toBe('paired_total');
 });

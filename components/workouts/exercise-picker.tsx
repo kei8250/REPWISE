@@ -1,5 +1,8 @@
 'use client';
 
+import { LoadBasisSelect } from './load-basis-select';
+import type { LoadBasis } from '@/lib/workouts/reps';
+
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -35,6 +38,7 @@ export function ExercisePicker({
   const [bodyPart, setBodyPart] = useState('すべて');
   const [newName, setNewName] = useState('');
   const [newBodyPart, setNewBodyPart] = useState('その他');
+  const [newLoadBasis, setNewLoadBasis] = useState<LoadBasis>('per_rep');
   const [newRepMode, setNewRepMode] = useState<'standard' | 'per_side'>('standard');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +101,7 @@ export function ExercisePicker({
         name: newName.trim(),
         bodyPart: newBodyPart,
         repMode: newRepMode,
+        ...(newRepMode === 'per_side' ? { loadBasis: newLoadBasis } : {}),
       });
       setItems((current) => [
         ...current.filter((item) => item.id !== created.id),
@@ -197,6 +202,7 @@ export function ExercisePicker({
             <select id="new-exercise-rep-mode" value={newRepMode} onChange={event => setNewRepMode(event.target.value === 'per_side' ? 'per_side' : 'standard')} className="mb-3 h-11 w-full rounded-lg border bg-background px-3 text-base">
               <option value="standard">通常 · 回数を1つ入力</option><option value="per_side">左右別 · 共通の重量と右・左の回数</option>
             </select>
+            {newRepMode === 'per_side' && <div className="mb-3"><LoadBasisSelect id="new-exercise-load-basis" value={newLoadBasis} onChange={setNewLoadBasis} /></div>}
             <div className="grid gap-2 sm:grid-cols-[1fr_130px_auto]">
               <Input
                 value={newName}

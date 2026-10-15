@@ -50,6 +50,13 @@
       "when": 1792023061595,
       "tag": "0006_side_repetitions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792036840097,
+      "tag": "0007_set_roles_and_load_basis",
+      "breakpoints": true
     }
   ]
 }

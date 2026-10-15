@@ -189,6 +189,13 @@ function repMode(value: unknown, path: string, issues: ValidationIssue[]): RepMo
   return undefined;
 }
 
+function optionalChoice<T extends string>(value: unknown, choices: readonly T[], path: string, issues: ValidationIssue[]): T | undefined {
+  if (value === undefined) return undefined;
+  const choice = choices.find(candidate => candidate === value);
+  if (!choice) issues.push({ path, message: '選択内容を確認してください' });
+  return choice;
+}
+
 export function validateExerciseMasterInput(
   value: unknown,
 ): CreateExerciseMasterInput {
@@ -202,6 +209,7 @@ export function validateExerciseMasterInput(
     id: input.id === undefined ? undefined : id(input.id, 'id', issues),
     name,
     bodyPart,
+    ...(input.loadBasis === undefined ? {} : { loadBasis: optionalChoice(input.loadBasis, ['per_rep', 'paired_total'] as const, 'loadBasis', issues) }),
     ...(input.repMode === undefined ? {} : { repMode: repMode(input.repMode, 'repMode', issues) }),
   };
   if (issues.length) throw new WorkoutValidationError(issues);
@@ -215,6 +223,7 @@ export function validateExerciseMasterUpdate(value: unknown): UpdateExerciseMast
   const result = {
     name: base.name,
     bodyPart: base.bodyPart,
+    ...(base.loadBasis ? { loadBasis: base.loadBasis } : {}),
     ...(base.repMode ? { repMode: base.repMode } : {}),
     defaultRepMin: integer(input.defaultRepMin, 'defaultRepMin', issues, 1, 999, true),
     defaultRepMax: integer(input.defaultRepMax, 'defaultRepMax', issues, 1, 999, true),
@@ -264,6 +273,8 @@ export function validateWorkoutSet(value: unknown, path = 'set', mode: RepMode =
     position: integer(input.position, `${path}.position`, issues, 0, 9999) ?? 0,
     status,
     setType: 'working',
+    ...(input.role === undefined ? {} : { role: optionalChoice(input.role, ['standard', 'top', 'backoff'] as const, `${path}.role`, issues) }),
+    ...(input.loadBasis === undefined ? {} : { loadBasis: optionalChoice(input.loadBasis, ['per_rep', 'paired_total'] as const, `${path}.loadBasis`, issues) }),
     targetLoadGrams: integer(
       input.targetLoadGrams,
       `${path}.targetLoadGrams`,
@@ -505,13 +516,16 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
     else throw error;
   }
   if (
-    ['complete', 'edit', 'delete', 'restore'].includes(operation) &&
+    ['complete', 'edit'].includes(operation) &&
     workout?.status !== 'completed'
   ) {
     issues.push({
       path: 'payload.workout.status',
       message: '完了状態が必要です',
     });
+  }
+  if (['delete', 'restore'].includes(operation) && workout && !['active', 'completed'].includes(workout.status)) {
+    issues.push({ path: 'payload.workout.status', message: '進行中または完了済みの記録を選んでください' });
   }
   if (
     ['create', 'replace'].includes(operation) &&

@@ -27,6 +27,7 @@ export interface WorkoutCompletionProgressionSummary {
   workoutVersion: number;
   totalExercises: number;
   counts: {
+    setSpecific?: number;
     increaseLoad: number;
     keepLoad: number;
     insufficientData: number;
@@ -36,6 +37,7 @@ export interface WorkoutCompletionProgressionSummary {
 
 export function progressionStatusLabel(status: ProgressionDecision['status']) {
   if (status === 'increase_load') return '目標達成';
+  if (status === 'set_specific') return 'セット別に進行を判定';
   if (status === 'keep_load') return '今回は同重量継続';
   return '判定できません';
 }
@@ -54,6 +56,8 @@ const reasonLabels: Record<ProgressionReasonCode, string> = {
   incomplete_working_set: '未完了セットがあります',
   invalid_actuals: '重量またはrepの記録が不足しています',
   inconsistent_load: '重量がセットごとに異なります',
+  set_specific_progression: 'セット別の実績と目標範囲で提案',
+  load_basis_changed: '重量の入力基準が変わっています。目標を確認してください',
 };
 
 export function progressionReasonLabel(reason: ProgressionReasonCode) {

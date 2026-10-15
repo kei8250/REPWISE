@@ -1,3 +1,4 @@
+import { setMetadata } from '@/lib/workouts/reps';
 import {
   buildAnalytics,
   type AnalyticsExerciseHistoryInput,
@@ -36,6 +37,7 @@ type PerformanceRow = {
   default_working_sets: number | null;
   default_increment_grams: number | null;
   default_rest_seconds: number | null;
+  master_load_basis: string;
   set_id: string;
   set_position: number;
   set_status: string;
@@ -44,6 +46,10 @@ type PerformanceRow = {
   actual_reps: number | null;
   actual_reps_left: number | null;
   actual_reps_right: number | null;
+  role: string;
+  load_basis: string;
+  target_rep_min: number | null;
+  target_rep_max: number | null;
   set_deleted_at: string | null;
 };
 
@@ -79,6 +85,7 @@ function masterFromRow(row: PerformanceRow): ExerciseMaster {
     normalizedName: row.normalized_name,
     bodyPart: row.body_part ?? '',
     measurementType: 'weight_reps',
+    ...(row.master_load_basis === 'paired_total' ? { loadBasis: 'paired_total' as const } : {}),
     defaultRepMin: numberOrNull(row.default_rep_min),
     defaultRepMax: numberOrNull(row.default_rep_max),
     defaultWorkingSets: numberOrNull(row.default_working_sets),
@@ -130,6 +137,8 @@ function groupExerciseHistory(rows: PerformanceRow[]) {
       setType: row.set_type,
       actualLoadGrams: numberOrNull(row.actual_load_grams),
       actualReps: numberOrNull(row.actual_reps),
+      ...setMetadata(row),
+      targetRepMin: row.target_rep_min, targetRepMax: row.target_rep_max,
       ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.set_deleted_at,
     };
@@ -168,10 +177,10 @@ export async function getAnalyticsInput(
                   em.body_part, em.measurement_type,
                   em.default_rep_min, em.default_rep_max,
                   em.default_working_sets, em.default_increment_grams,
-                  em.default_rest_seconds,
+                  em.default_rest_seconds, em.load_basis AS master_load_basis,
                   ws.id AS set_id, ws.position AS set_position,
                   ws.status AS set_status, ws.set_type,
-                  ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
+                  ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.role, ws.load_basis, ws.target_rep_min, ws.target_rep_max,
                   ws.deleted_at AS set_deleted_at
            FROM workout_set ws
            JOIN workout_exercise we ON we.id = ws.workout_exercise_id

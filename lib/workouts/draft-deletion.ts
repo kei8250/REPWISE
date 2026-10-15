@@ -23,9 +23,9 @@ export async function deleteActiveWorkout(
   return deleted;
 }
 
-export async function restoreActiveWorkout(id: string, databaseName?: string) {
+export async function restoreDeletedWorkout(id: string, databaseName?: string) {
   const local = await getLocalWorkoutDraft(id, databaseName);
-  if (!local || local.workout.status !== 'active' || !local.workout.deletedAt)
+  if (!local || !['active', 'completed'].includes(local.workout.status) || !local.workout.deletedAt)
     throw new Error('取り消せる削除記録がありません');
   const restored = {
     ...local.workout,
@@ -37,3 +37,5 @@ export async function restoreActiveWorkout(id: string, databaseName?: string) {
   });
   return restored;
 }
+
+export const restoreActiveWorkout = restoreDeletedWorkout;

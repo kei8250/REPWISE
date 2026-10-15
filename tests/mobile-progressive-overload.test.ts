@@ -194,7 +194,7 @@ describe('mobile progressive overload workflow', () => {
       })),
     };
     expect(evaluateProgression(mixed, profile).reasonCode).toBe(
-      'inconsistent_load',
+      'set_specific_progression',
     );
     const uniform = {
       ...mixed,

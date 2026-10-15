@@ -1,5 +1,7 @@
 'use client';
 
+import { SetProgressionProposals } from './set-progression-proposals';
+
 import { ProgressionEvidence } from './progression-evidence';
 import { useRef, useState } from 'react';
 import {
@@ -108,6 +110,7 @@ export function WorkoutProgressionSummary({
                   {state.summary.counts.increaseLoad}種目：重量アップ候補
                 </span>
                 <span>{state.summary.counts.keepLoad}種目：同重量継続</span>
+                {Boolean(state.summary.counts.setSpecific) && <span>{state.summary.counts.setSpecific}種目：セット別判定</span>}
                 {state.summary.counts.insufficientData > 0 && (
                   <span>
                     {state.summary.counts.insufficientData}種目：判定不能
@@ -127,7 +130,7 @@ export function WorkoutProgressionSummary({
                 const Icon =
                   exercise.decision.status === 'increase_load'
                     ? TrendingUp
-                    : exercise.decision.status === 'keep_load'
+                    : (exercise.decision.status === 'keep_load' || exercise.decision.status === 'set_specific')
                       ? Minus
                       : CircleHelp;
                 const accepted =
@@ -151,7 +154,7 @@ export function WorkoutProgressionSummary({
                   >
                     <div className="flex items-start gap-3">
                       <span
-                        className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-full ${exercise.decision.status === 'increase_load' ? 'bg-emerald-100 text-emerald-800' : exercise.decision.status === 'keep_load' ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'}`}
+                        className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-full ${exercise.decision.status === 'increase_load' ? 'bg-emerald-100 text-emerald-800' : (exercise.decision.status === 'keep_load' || exercise.decision.status === 'set_specific') ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'}`}
                       >
                         <Icon className="size-4" />
                       </span>
@@ -192,7 +195,7 @@ export function WorkoutProgressionSummary({
                           </p>
                         )}
                         <p className="mt-2 text-sm font-black">
-                          今回の自動判定：{progressionStatusLabel(exercise.decision.status)}
+                          今回の自動判定：{exercise.decision.setDecisions?.length ? 'セット別に進行を判定' : progressionStatusLabel(exercise.decision.status)}
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {progressionReasonLabel(exercise.decision.reasonCode)}
@@ -226,6 +229,7 @@ export function WorkoutProgressionSummary({
                             {isStale && <p className="mt-1 text-amber-700">元の記録が変更されています。目標を再確認してください。</p>}
                           </div>
                         )}
+                        <SetProgressionProposals items={exercise.decision.setDecisions} />
                         {nextTarget && (
                           <div className="mt-2">
                             <p className="text-xs font-bold text-primary">

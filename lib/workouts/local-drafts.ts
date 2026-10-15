@@ -23,6 +23,7 @@ export type LocalDraftStatus =
   | 'deleted';
 
 export interface LocalWorkoutDraft {
+  editBaseline?: Workout;
   workoutId: string;
   schemaVersion: typeof LOCAL_DRAFT_SCHEMA_VERSION;
   draftStatus: LocalDraftStatus;
@@ -271,18 +272,50 @@ export async function saveCompletedWorkoutEditDraft(
   const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
   const currentValue = await requestResult(store.get(workout.id));
   const current = isLocalWorkoutDraft(currentValue) ? currentValue : null;
+  if (current?.draftStatus === 'deleted' || current?.workout.deletedAt) throw new Error('削除済みの記録は編集できません');
   const record = createDraftRecord(workout, 'completed_edit', {
     ...options,
     serverUpdatedAt:
       options.serverUpdatedAt ?? current?.serverUpdatedAt ?? workout.updatedAt,
   });
+  if (workout.status !== 'completed' || workout.deletedAt) throw new Error('完了済みの記録だけを編集できます');
+  const baseline = current?.draftStatus === 'completed_edit' ? current.editBaseline : workout;
+  if (baseline) record.editBaseline = structuredClone(baseline);
   record.serverVersion =
     current?.draftStatus === 'completed_edit'
       ? current.serverVersion
-      : workout.version;
+      : Math.max(workout.version, current?.serverVersion ?? 0);
   store.put(record);
   await complete;
   return record;
+}
+
+// Cancel only the unsubmitted editor draft; immutable queued changes remain intact.
+export async function cancelCompletedWorkoutEdit(workoutId: string, options: { serverWorkout?: Workout | null; databaseName?: string } = {}) {
+  const database = await openDatabase(options.databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME], 'readwrite');
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const value = await requestResult(store.get(workoutId));
+  const current = isLocalWorkoutDraft(value) ? value : null;
+  const pending = (await requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).index('workoutId').getAll(workoutId))).filter(isWorkoutMutation).sort((a, b) => b.sequence - a.sequence);
+  if (!current || current.draftStatus !== 'completed_edit') {
+    await complete;
+    if (current?.workout.status === 'completed' && !current.workout.deletedAt) return current.workout;
+    throw new Error('完了状態を確認できません。編集内容は保持されています。');
+  }
+  const queued = pending[0]?.payload.workout;
+  const server = options.serverWorkout;
+  const baseline = current.editBaseline ?? (queued?.status === 'completed' && !queued.deletedAt ? queued : null) ?? (server?.status === 'completed' && !server.deletedAt ? server : null);
+  if (!baseline || baseline.status !== 'completed' || baseline.deletedAt) {
+    await complete;
+    throw new Error('編集前の完了記録を確認できません。編集内容は保持されています。');
+  }
+  const restored = createDraftRecord({ ...baseline, version: Math.max(baseline.version, current.serverVersion ?? 0) }, 'completed', { serverUpdatedAt: current.serverUpdatedAt });
+  restored.serverVersion = current.serverVersion;
+  store.put(restored);
+  await complete;
+  return restored.workout;
 }
 
 export async function saveWorkoutDraftAndEnqueueMutation(
@@ -537,7 +570,8 @@ export async function acknowledgeWorkoutMutation(
     );
     const isLatestSnapshot =
       !hasLaterMutation && current.localUpdatedAt <= mutation.createdAt;
-    const syncedWorkout = isLatestSnapshot
+    const hasUnsubmittedEdit = current.draftStatus === 'completed_edit' && (Boolean(current.editBaseline) || !isLatestSnapshot);
+    const syncedWorkout = isLatestSnapshot && !hasUnsubmittedEdit
       ? structuredClone(serverWorkout)
       : current.workout;
     const acknowledgedDraftStatus: LocalDraftStatus =
@@ -552,9 +586,11 @@ export async function acknowledgeWorkoutMutation(
     drafts.put({
       ...current,
       workout: syncedWorkout,
-      draftStatus: hasLaterMutation
+      draftStatus: hasLaterMutation || hasUnsubmittedEdit
         ? current.draftStatus
         : acknowledgedDraftStatus,
+      ...(hasUnsubmittedEdit && current.editBaseline && !hasLaterMutation && serverWorkout.status === 'completed'
+        ? { editBaseline: { ...current.editBaseline, version: serverWorkout.version, updatedAt: serverWorkout.updatedAt } } : {}),
       completedAt:
         syncedWorkout.status === 'completed'
           ? (syncedWorkout.endedAt ?? current.completedAt)
@@ -674,6 +710,9 @@ export function selectWorkoutDetailForDisplay(
   serverKnownMissing = false,
   missingServerVersion: number | null = null,
 ): WorkoutRestoreResult {
+  if (localDraft?.draftStatus === 'completed' && localDraft.workout.status !== 'completed') {
+    return serverWorkout?.status === 'completed' ? { workout: serverWorkout, source: 'server' } : { workout: null, source: 'none' };
+  }
   if (!localDraft) {
     return serverWorkout
       ? { workout: serverWorkout, source: 'server' }
@@ -703,6 +742,28 @@ export function selectWorkoutDetailForDisplay(
     return { workout: localDraft.workout, source: 'local' };
   }
   return { workout: serverWorkout, source: 'server' };
+}
+
+export async function repairCompletedWorkoutDraft(server: Workout, databaseName = LOCAL_DRAFT_DATABASE_NAME) {
+  if (server.deletedAt) return;
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME], 'readwrite');
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const value = await requestResult(store.get(server.id));
+  const pending = (await requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).index('workoutId').getAll(server.id))).filter(isWorkoutMutation).sort((a, b) => b.sequence - a.sequence);
+  if (isLocalWorkoutDraft(value) && value.draftStatus === 'completed' && value.workout.status !== 'completed') {
+    const latest = pending[0]?.payload.workout;
+    const queuedCompleted = latest?.status === 'completed' && !latest.deletedAt ? latest : null;
+    if (pending.length && queuedCompleted) {
+      const repaired = createDraftRecord(queuedCompleted, 'completed', { serverUpdatedAt: value.serverUpdatedAt });
+      repaired.serverVersion = value.serverVersion;
+      store.put(repaired);
+    } else if (!pending.length && server.status === 'completed' && server.version >= (value.serverVersion ?? value.workout.version)) {
+      store.put(createDraftRecord(server, 'completed'));
+    }
+  }
+  await complete;
 }
 
 export async function saveExerciseMasterCache(

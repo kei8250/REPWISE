@@ -13,6 +13,7 @@ import type {
   UpdateExerciseMasterInput,
 } from '@/lib/workouts/types';
 import { summarizeSyncQueue } from '@/lib/workouts/sync-overview';
+import { LoadBasisSelect } from '@/components/workouts/load-basis-select';
 import { WorkoutSyncList } from './workout-sync-list';
 
 function subscribeSettings(update: () => void) {
@@ -375,6 +376,7 @@ function ExerciseSettingsEditor({
         <option value="standard">通常</option><option value="per_side">左右別（重量は共通）</option>
       </select>
       <p className="text-xs text-muted-foreground">方式の変更は次に追加する種目から反映します。保存済み記録の入力方式と左右の回数は変わりません。</p>
+      {value.repMode === 'per_side' && <LoadBasisSelect id="setting-load-basis" value={value.loadBasis} onChange={loadBasis => setValue({ ...value, loadBasis })} />}
       {value.defaultRepMin !== null && value.defaultRepMax !== null && value.defaultRepMin > value.defaultRepMax && <p role="alert" className="text-sm text-destructive">rep下限が上限を超えています。下の回数を変更すると範囲を調整できます。</p>}
       <div className="grid grid-cols-2 gap-3">
         {(

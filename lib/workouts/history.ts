@@ -1,4 +1,4 @@
-import { repsLabel } from './reps';
+import { repsLabel, hasSideReps, loadBasisLabel, setRoleLabel } from './reps';
 import type { WorkoutSet } from './types';
 
 export interface WorkoutHistoryFilter {
@@ -51,9 +51,9 @@ export function previousSetAt(
 }
 
 export function setPerformanceLabel(
-  set: Pick<WorkoutSet, 'actualLoadGrams' | 'actualReps' | 'actualRepsLeft' | 'actualRepsRight'>,
+  set: Pick<WorkoutSet, 'actualLoadGrams' | 'actualReps' | 'actualRepsLeft' | 'actualRepsRight' | 'role' | 'loadBasis'>,
 ) {
-  return `${set.actualLoadGrams === null ? '—' : `${set.actualLoadGrams / 1000} kg`} × ${repsLabel(set)}`;
+  return `${set.role && set.role !== 'standard' ? `${setRoleLabel(set.role)} · ` : ''}${set.actualLoadGrams === null ? '—' : `${set.actualLoadGrams / 1000} kg`} × ${repsLabel(set)}${hasSideReps(set) ? `（${loadBasisLabel(set.loadBasis)}）` : ''}`;
 }
 
 // Keep positions stable and reject planned/skipped sets even when they have inputs.
@@ -68,6 +68,17 @@ export function referenceAt(entries: ExerciseHistoryEntry[], position: number) {
   for (const entry of entries) {
     const set = previousSetAt(entry, position);
     if (set && validReferenceSet(set)) return { entry, set };
+  }
+  return null;
+}
+
+export function referenceForSet(entries: ExerciseHistoryEntry[], current: WorkoutSet, currentSets: WorkoutSet[]) {
+  const role = current.role ?? 'standard';
+  const ordinal = currentSets.filter(set => (set.role ?? 'standard') === role && set.position < current.position).length;
+  for (const entry of entries) {
+    const candidates = entry.sets.filter(set => (set.role ?? 'standard') === role).sort((a, b) => a.position - b.position);
+    const set = role === 'standard' ? previousSetAt(entry, current.position) : candidates[ordinal];
+    if (set && (set.role ?? 'standard') === role && (set.loadBasis ?? 'per_rep') === (current.loadBasis ?? 'per_rep') && validReferenceSet(set)) return { entry, set };
   }
   return null;
 }

@@ -1,3 +1,4 @@
+import { setMetadata } from './reps';
 import type { RepMode } from './reps';
 import type { WorkoutHistoryFilter } from './history';
 import type {
@@ -70,6 +71,8 @@ type SetRow = {
   actual_reps: number | null;
   actual_reps_left: number | null;
   actual_reps_right: number | null;
+  role: string;
+  load_basis: string;
   memo: string;
   completed_at: string | null;
   created_at: string;
@@ -95,7 +98,7 @@ export async function listExerciseMasters(
   const result = await db
     .prepare(`
     SELECT id, name, normalized_name, body_part, measurement_type, default_rep_min,
-           default_rep_max, default_working_sets, default_increment_grams, default_rest_seconds, rep_mode
+           default_rep_max, default_working_sets, default_increment_grams, default_rest_seconds, rep_mode, load_basis
     FROM exercise_master
     WHERE owner_id = ? AND archived_at IS NULL
     ORDER BY body_part, name
@@ -108,6 +111,7 @@ export async function listExerciseMasters(
     normalizedName: String(row.normalized_name),
     bodyPart: String(row.body_part),
     measurementType: 'weight_reps',
+    ...(row.load_basis === 'paired_total' ? { loadBasis: 'paired_total' as const } : {}),
     ...(row.rep_mode === 'per_side' ? { repMode: 'per_side' as const } : {}),
     defaultRepMin:
       row.default_rep_min === null ? null : Number(row.default_rep_min),
@@ -141,8 +145,8 @@ export async function createExerciseMaster(
       .prepare(`
       INSERT INTO exercise_master
         (id, owner_id, name, normalized_name, body_part, measurement_type, default_rep_min, default_rep_max,
-         default_working_sets, default_increment_grams, default_rest_seconds, created_at, updated_at, rep_mode)
-      VALUES (?, ?, ?, ?, ?, 'weight_reps', 8, 12, 3, 2500, 90, ?, ?, ?)
+         default_working_sets, default_increment_grams, default_rest_seconds, created_at, updated_at, rep_mode, load_basis)
+      VALUES (?, ?, ?, ?, ?, 'weight_reps', 8, 12, 3, 2500, 90, ?, ?, ?, ?)
     `)
       .bind(
         id,
@@ -153,6 +157,7 @@ export async function createExerciseMaster(
         createdAt,
         createdAt,
         input.repMode ?? 'standard',
+        input.loadBasis ?? 'per_rep',
       )
       .run();
   } catch (error) {
@@ -168,6 +173,7 @@ export async function createExerciseMaster(
     name: input.name,
     normalizedName,
     bodyPart: input.bodyPart,
+    ...(input.loadBasis ? { loadBasis: input.loadBasis } : {}),
     ...(input.repMode ? { repMode: input.repMode } : {}),
     measurementType: 'weight_reps',
     defaultRepMin: 8,
@@ -233,7 +239,7 @@ export async function listWorkouts(
            COUNT(DISTINCT we.id) AS exercise_count,
            COUNT(ws.id) AS set_count,
            SUM(CASE WHEN ws.status = 'completed' THEN 1 ELSE 0 END) AS completed_set_count,
-           COALESCE(SUM(CASE WHEN ws.status = 'completed' THEN ws.actual_load_grams * (CASE WHEN ws.actual_reps_left IS NOT NULL OR ws.actual_reps_right IS NOT NULL THEN COALESCE(ws.actual_reps_left, 0) + COALESCE(ws.actual_reps_right, 0) ELSE ws.actual_reps END) ELSE 0 END), 0) AS total_volume_grams
+           COALESCE(SUM(CASE WHEN ws.status = 'completed' THEN ws.actual_load_grams * (CASE WHEN ws.actual_reps_left IS NOT NULL OR ws.actual_reps_right IS NOT NULL THEN (COALESCE(ws.actual_reps_left, 0) + COALESCE(ws.actual_reps_right, 0)) / (CASE WHEN ws.load_basis = 'paired_total' THEN 2.0 ELSE 1 END) ELSE ws.actual_reps END) ELSE 0 END), 0) AS total_volume_grams
     FROM workout w
     LEFT JOIN workout_exercise we ON we.workout_id = w.id
     LEFT JOIN workout_set ws ON ws.workout_exercise_id = we.id AND ws.deleted_at IS NULL
@@ -280,7 +286,7 @@ export async function getWorkout(
   const setResult = await db
     .prepare(`
     SELECT ws.id, ws.workout_exercise_id, ws.position, ws.status, ws.set_type, ws.target_load_grams,
-           ws.target_rep_min, ws.target_rep_max, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.memo,
+           ws.target_rep_min, ws.target_rep_max, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.role, ws.load_basis, ws.memo,
            ws.completed_at, ws.created_at, ws.updated_at
     FROM workout_set ws
     JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -305,6 +311,7 @@ export async function getWorkout(
         set.target_rep_max === null ? null : Number(set.target_rep_max),
       actualLoadGrams:
         set.actual_load_grams === null ? null : Number(set.actual_load_grams),
+      ...setMetadata(set),
       actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
       ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
       memo: set.memo,
@@ -547,8 +554,8 @@ function snapshotStatements(
           .prepare(
             `INSERT INTO workout_set
               (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max,
-               actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at)
-             SELECT ?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+               actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, role, load_basis, memo, completed_at, created_at, updated_at)
+             SELECT ?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
              )`,
@@ -565,6 +572,8 @@ function snapshotStatements(
             set.actualReps,
             set.actualRepsLeft ?? null,
             set.actualRepsRight ?? null,
+            set.role ?? 'standard',
+            set.loadBasis ?? 'per_rep',
             set.memo,
             set.completedAt,
             set.createdAt,
@@ -944,8 +953,8 @@ export async function replaceWorkout(
           .prepare(`
         INSERT INTO workout_set
           (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max,
-           actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, role, load_basis, memo, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
           .bind(
             set.id,
@@ -959,6 +968,8 @@ export async function replaceWorkout(
             set.actualReps,
             set.actualRepsLeft ?? null,
             set.actualRepsRight ?? null,
+            set.role ?? 'standard',
+            set.loadBasis ?? 'per_rep',
             set.memo,
             set.completedAt,
             set.createdAt,
@@ -1082,7 +1093,7 @@ export async function addWorkoutSet(
   const set = validateWorkoutSet(value, 'set', owner.rep_mode);
   await db
     .prepare(
-      `INSERT INTO workout_set (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max, actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO workout_set (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max, actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, role, load_basis, memo, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       set.id,
@@ -1096,6 +1107,8 @@ export async function addWorkoutSet(
       set.actualReps,
       set.actualRepsLeft ?? null,
       set.actualRepsRight ?? null,
+      set.role ?? 'standard',
+      set.loadBasis ?? 'per_rep',
       set.memo,
       set.completedAt,
       set.createdAt,
@@ -1119,7 +1132,7 @@ export async function updateWorkoutSet(
     throw new WorkoutConflictError('セットIDが一致しません');
   const result = await db
     .prepare(
-      `UPDATE workout_set SET position = ?, status = ?, target_load_grams = ?, target_rep_min = ?, target_rep_max = ?, actual_load_grams = ?, actual_reps = ?, actual_reps_left = ?, actual_reps_right = ?, memo = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_exercise_id = ? AND EXISTS (SELECT 1 FROM workout_exercise WHERE id = ? AND workout_id = ?)`,
+      `UPDATE workout_set SET position = ?, status = ?, target_load_grams = ?, target_rep_min = ?, target_rep_max = ?, actual_load_grams = ?, actual_reps = ?, actual_reps_left = ?, actual_reps_right = ?, role = ?, load_basis = ?, memo = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_exercise_id = ? AND EXISTS (SELECT 1 FROM workout_exercise WHERE id = ? AND workout_id = ?)`,
     )
     .bind(
       set.position,
@@ -1131,6 +1144,8 @@ export async function updateWorkoutSet(
       set.actualReps,
       set.actualRepsLeft ?? null,
       set.actualRepsRight ?? null,
+      set.role ?? 'standard',
+      set.loadBasis ?? 'per_rep',
       set.memo,
       set.completedAt,
       now(),

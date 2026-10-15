@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // Use a dedicated Chromium profile. Every app API is intercepted with synthetic data.
 // This script never navigates to the public site or uses a real database.
+const legacySyncReview = process.argv.includes('--legacy-sync');
 const stateProgressReview = process.argv.includes('--state-progress');
 const navigationReview = process.argv.includes('--navigation');
 const fixtureOrigin = 'http://localhost:3000';
@@ -29,7 +30,7 @@ let posts = 0;
 const server = new Map();
 const processed = new Map();
 const fixturesDir = process.env.REPWISE_REVIEW_OUTPUT_DIR ?? fileURLToPath(
-  new URL(stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
+  new URL(legacySyncReview ? '../docs/reviews/legacy-sync-recovery/' : stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
 );
 let master = {
   id: 'ex-bench-press',
@@ -458,6 +459,9 @@ ws.addEventListener('message', async (event) => {
       )
       .slice(offset, offset + limit)
       .map(summary);
+  } else if (u.pathname.endsWith('/sync-state')) {
+    const id = decodeURIComponent(u.pathname.split('/')[4]);
+    data = { workout: server.get(id) ?? null };
   } else if (
     u.pathname.startsWith('/api/v2/workouts/') &&
     !u.pathname.endsWith('/progression-summary')
@@ -584,7 +588,10 @@ async function select(selector, value) {
 }
 try {
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
-if (stateProgressReview) {
+if (legacySyncReview) {
+  const { reviewLegacySync } = await import('./review-legacy-sync.mjs');
+  await reviewLegacySync({ send, registerTarget: (id, sessionId) => extraTargets.set(id, sessionId), markClosing: sessionId => closingSessions.add(sessionId), evalJs, go, reload, until, tap, type, clickText, pause, shot, setViewport, overflow, check, server, fixtureWorkout, fixturesDir, setOnline: value => { online = value; } });
+} else if (stateProgressReview) {
   const { reviewWorkoutStateProgress } = await import('./review-workout-state-progress.mjs');
   await reviewWorkoutStateProgress({ send, evalJs, go, reload, until, tap, clickText, type, select, pause, shot, setViewport, overflow, check, server, fixtureWorkout, oldSets, dialogs, registerTarget: (id, sessionId) => extraTargets.set(id, sessionId), markClosing: sessionId => closingSessions.add(sessionId), setOnline: value => { online = value; }, setFailureCode: value => { failureCode = value; }, setRecommendation: value => { customRecommendation = value; }, fixturesDir });
 } else if (navigationReview) {

@@ -19,6 +19,13 @@ export function mergeVisibleWorkouts(
 ) {
   const pending = new Set(mutations.map((item) => item.workoutId));
   const items = new Map(server.map((item) => [item.id, item]));
+  const latest = new Map<string, WorkoutMutation>();
+  for (const mutation of mutations) {
+    if ((latest.get(mutation.workoutId)?.sequence ?? -1) < mutation.sequence) latest.set(mutation.workoutId, mutation);
+  }
+  for (const [id, mutation] of latest) {
+    if (mutation.operation === 'delete' && !drafts.some((draft) => draft.workoutId === id)) items.delete(id);
+  }
   for (const draft of drafts) {
     if (draft.draftStatus === 'deleted' || draft.workout.deletedAt) { items.delete(draft.workoutId); continue; }
     if (draft.workout.status === 'completed' && items.get(draft.workoutId)?.status === 'active') {
@@ -67,18 +74,20 @@ export async function loadVisibleWorkouts(
   limit = 30,
   filter: WorkoutHistoryFilter = {},
 ) {
-  // Capture local snapshots before the GET so an ACK during the request cannot
-  // remove an unsynced record before the server list has caught up.
-  const local = await readLocalWorkoutSources().catch(() => ({
+  // Keep IDs pending at request start, then reread snapshots after GET to honor later deletes.
+  let local = await readLocalWorkoutSources().catch(() => ({
     drafts: [],
     mutations: [],
   }));
   const masters = (await getExerciseMasterCacheRecord().catch(() => null))?.exercises ?? [];
   try {
     const server = await listWorkouts(status, limit + 1, undefined, filter);
+    const initiallyPending = new Set(local.mutations.map((item) => item.workoutId));
+    local = await readLocalWorkoutSources();
+    const acknowledgedDuringRead = local.drafts.filter((draft) => initiallyPending.has(draft.workoutId) && draft.draftStatus !== 'deleted' && !draft.workout.deletedAt && !server.some((row) => row.id === draft.workoutId) && (!status || draft.workout.status === status) && (!filter.from || draft.workout.localDate >= filter.from) && (!filter.to || draft.workout.localDate <= filter.to) && !filter.exerciseName && !filter.bodyPart).map((draft) => workoutToSummary(draft.workout));
     return {
       items: mergeVisibleWorkouts(
-        server.slice(0, limit),
+        [...server.slice(0, limit), ...acknowledgedDuringRead],
         local.drafts,
         local.mutations,
         status,
@@ -91,6 +100,7 @@ export async function loadVisibleWorkouts(
       serverAvailable: true,
     };
   } catch (error) {
+    local = await readLocalWorkoutSources();
     const items = mergeVisibleWorkouts(
       [],
       local.drafts,

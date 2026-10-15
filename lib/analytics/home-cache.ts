@@ -15,6 +15,7 @@ export function createHomeAnalyticsCache(dependencies: Dependencies) {
   let cached: { value: HomeAnalyticsSummary; savedAt: number } | null = null;
   let inFlight: Promise<HomeAnalyticsSummary> | null = null;
 
+  let generation = 0;
   async function load(force = false) {
     if (
       !force &&
@@ -24,7 +25,9 @@ export function createHomeAnalyticsCache(dependencies: Dependencies) {
       return structuredClone(cached.value);
     }
     if (!inFlight) {
+      const started = generation;
       const request = dependencies.fetch().then((value) => {
+        if (started !== generation) return value;
         cached = { value: structuredClone(value), savedAt: dependencies.now() };
         return value;
       });
@@ -39,6 +42,8 @@ export function createHomeAnalyticsCache(dependencies: Dependencies) {
   }
 
   function invalidate() {
+    generation++;
+    inFlight = null;
     cached = null;
   }
 

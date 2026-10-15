@@ -258,6 +258,12 @@ export async function getAnalyticsSnapshot(
   db: D1Database,
   range: AnalyticsRange,
   now = new Date(),
+  excludedWorkoutIds: string[] = [],
 ): Promise<AnalyticsSnapshot> {
-  return buildAnalytics(await getAnalyticsInput(db, range, now));
+  const input = await getAnalyticsInput(db, range, now);
+  const excluded = new Set(excludedWorkoutIds);
+  input.workouts = input.workouts.filter((item) => !excluded.has(item.id));
+  input.exerciseHistory = input.exerciseHistory.filter((item) => !excluded.has(item.performance.workoutId));
+  input.acceptedTargets = input.acceptedTargets.filter((item) => !excluded.has(item.sourceWorkoutId)).map((item) => excluded.has(item.appliedWorkoutId ?? '') ? { ...item, appliedWorkoutDeletedAt: now.toISOString() } : item);
+  return buildAnalytics(input);
 }

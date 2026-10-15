@@ -66,6 +66,7 @@ export function DeletionSyncNotices({
       (draft) =>
         draft.workoutId === lastDeletedId ||
         observedIds.includes(draft.workoutId) ||
+        (draft.draftStatus === 'deleted' && !draft.deletionConfirmedAt) ||
         queue.some(
           (entry) =>
             entry.id === draft.workoutId &&
@@ -110,7 +111,7 @@ export function DeletionSyncNotices({
         const isDeleted =
           draft.draftStatus === 'deleted' || Boolean(draft.workout.deletedAt);
         const label = !head
-          ? '削除を同期済み'
+          ? draft.deletionConfirmedAt ? '削除を同期済み' : '端末では削除済み・サーバーの削除状態は未確認'
           : failed
             ? '削除の同期に失敗・端末では削除済み'
             : head.syncStatus === 'syncing' || retrying === draft.workoutId
@@ -137,6 +138,7 @@ export function DeletionSyncNotices({
               </p>
             )}
             <div className="mt-2 flex flex-wrap gap-2">
+              {isDeleted && !head && !draft.deletionConfirmedAt && <a href={APP_ROUTES.settings} className="min-h-11 py-3 text-sm font-bold text-primary">設定で削除状態を確認</a>}
               {head?.syncStatus === 'conflict' ? (
                 <a
                   href={APP_ROUTES.settings}

@@ -9,6 +9,7 @@ import {
   LOCAL_DRAFT_STORE_NAME,
   LOCAL_DRAFT_DATABASE_NAME,
   markLocalWorkoutDraftCompleted,
+  exportWorkoutRecoveryData,
   pruneCompletedWorkoutDrafts,
   saveActiveWorkoutDraft,
   saveCompletedWorkoutEditDraft,
@@ -416,7 +417,7 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
     expect(await getLocalWorkoutDraft(completed.id)).not.toBeNull();
   });
 
-  it('Phase 1B-1bの既存キューをbase version付きで安全にアップグレードする', async () => {
+  it('旧キューの試行済みリクエストを推測で書き換えず、原本と未送信の変換を保持する', async () => {
     const databaseName = `${LOCAL_DRAFT_DATABASE_NAME}-legacy-upgrade`;
     await closeLocalDraftDatabase(databaseName);
     await new Promise<void>((resolve, reject) => {
@@ -486,7 +487,11 @@ describe('Phase 1B-1a IndexedDB local drafts', () => {
       (await listWorkoutMutations(legacy.id, databaseName)).map(
         (item) => item.baseVersion,
       ),
-    ).toEqual([5, 6]);
+    ).toEqual([5]);
+    const raw = await exportWorkoutRecoveryData(databaseName);
+    expect(raw.mutations).toContainEqual(expect.objectContaining({ mutationId: 'legacy-replace-1', retryCount: 1, lastError: 'response lost' }));
+    expect(raw.mutations.find((item) => item.mutationId === 'legacy-replace-1')).not.toHaveProperty('baseVersion');
+    expect(raw.recoveryArchive).toHaveLength(2);
     await closeLocalDraftDatabase(databaseName);
   });
 

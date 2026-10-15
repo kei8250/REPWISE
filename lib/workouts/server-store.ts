@@ -430,10 +430,10 @@ function makeServerSnapshot(
       .sort((a, b) => a.position - b.position)
       .map((exercise) => ({
         ...exercise,
-        updatedAt,
+        updatedAt: tombstoneOperation ? exercise.updatedAt : updatedAt,
         sets: [...exercise.sets]
           .sort((a, b) => a.position - b.position)
-          .map((set) => ({ ...set, updatedAt })),
+          .map((set) => ({ ...set, updatedAt: tombstoneOperation ? set.updatedAt : updatedAt })),
       })),
   };
 }

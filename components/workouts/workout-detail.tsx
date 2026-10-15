@@ -527,82 +527,6 @@ export function WorkoutDetail({ id }: { id: string }) {
             />
           ) : (
             <>
-              {workout.status === 'completed' && !deleted && (
-                <WorkoutProgressionSummary
-                  workoutId={workout.id}
-                  workoutVersion={workout.version}
-                />
-              )}
-              {workout.exercises.map((exercise, exerciseIndex) => (
-                <Card
-                  key={exercise.id}
-                  className="rounded-3xl py-5 shadow-none"
-                >
-                  <CardContent className="px-5">
-                    <p className="text-xs font-bold text-primary">
-                      EXERCISE {exerciseIndex + 1}
-                    </p>
-                    <h2 className="mt-1 text-xl font-black">
-                      {exercise.exerciseNameSnapshot}
-                    </h2>
-                    <div className="mt-4 space-y-2">
-                      {exercise.sets.map((set, setIndex) => (
-                        <div
-                          key={set.id}
-                          className="rounded-xl bg-muted/65 p-3"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="grid size-7 place-items-center rounded-full bg-card text-xs font-black">
-                              {setIndex + 1}
-                            </span>
-                            {set.status === 'completed' && <Check className="size-4 shrink-0 text-primary" aria-label="完了" />}
-                            {set.status === 'skipped' && <span className="text-xs text-muted-foreground">スキップ</span>}
-                            <p className="font-black">
-                              {set.actualLoadGrams === null
-                                ? '—'
-                                : `${set.actualLoadGrams / 1000} kg`}{' '}
-                              × {repsLabel(set)}
-                            </p>
-                          </div>
-                          {(set.targetLoadGrams !== null ||
-                            set.targetRepMin !== null ||
-                            set.targetRepMax !== null) && (
-                            <p className="mt-2 pl-10 text-xs text-muted-foreground">
-                              目標:{' '}
-                              {set.targetLoadGrams === null
-                                ? '—'
-                                : `${set.targetLoadGrams / 1000} kg`}{' '}
-                              × {set.targetRepMin ?? '—'}〜
-                              {set.targetRepMax ?? '—'} reps
-                            </p>
-                          )}
-                          {set.memo && (
-                            <p className="mt-2 whitespace-pre-wrap break-words pl-10 text-sm text-muted-foreground">
-                              {set.memo}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    {exercise.note && (
-                      <p className="mt-4 whitespace-pre-wrap break-words rounded-xl border p-3 text-sm text-muted-foreground">
-                        {exercise.note}
-                      </p>
-                    )}
-                    <PastExerciseHistory exerciseId={exercise.exerciseId} localDate={workout.localDate} workoutId={workout.id} startedAt={workout.startedAt} />
-                  </CardContent>
-                </Card>
-              ))}
-              {workout.overallNote && (
-                <Card className="rounded-3xl py-5 shadow-none">
-                  <CardContent className="px-5">
-                    <p className="text-sm font-black">全体メモ</p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-                      {workout.overallNote}
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
               {workout.status === 'completed' && (
                 <div className="space-y-3">
                   <Button
@@ -662,6 +586,83 @@ export function WorkoutDetail({ id }: { id: string }) {
                   </div>
                 </div>
               )}
+              {workout.status === 'completed' && !deleted && (
+                <WorkoutProgressionSummary
+                  workoutId={workout.id}
+                  workoutVersion={workout.version}
+                />
+              )}
+              {workout.exercises.map((exercise, exerciseIndex) => (
+                <Card
+                  key={exercise.id}
+                  className="rounded-3xl py-5 shadow-none"
+                >
+                  <CardContent className="px-5">
+                    <p className="text-xs font-bold text-primary">
+                      EXERCISE {exerciseIndex + 1}
+                    </p>
+                    <h2 className="mt-1 text-xl font-black">
+                      {exercise.exerciseNameSnapshot}
+                    </h2>
+                    <div className="mt-4 space-y-2">
+                      {exercise.sets.map((set, setIndex) => (
+                        <div
+                          key={set.id}
+                          className="rounded-xl bg-muted/65 p-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="grid size-7 place-items-center rounded-full bg-card text-xs font-black">
+                              {setIndex + 1}
+                            </span>
+                            {set.status === 'completed' && <Check className="size-4 shrink-0 text-primary" aria-label="完了" />}
+                            {set.status === 'skipped' && <span className="text-xs text-muted-foreground">スキップ</span>}
+                            <p className="font-black">
+                              {set.actualLoadGrams === null
+                                ? '—'
+                                : `${set.actualLoadGrams / 1000} kg`}{' '}
+                              × {repsLabel(set)}
+                            </p>
+                          </div>
+                          {(set.targetLoadGrams !== null ||
+                            set.targetRepMin !== null ||
+                            set.targetRepMax !== null) && (
+                            <p className="mt-2 pl-10 text-xs text-muted-foreground">
+                              目標:{' '}
+                              {set.targetLoadGrams === null
+                                ? '—'
+                                : `${set.targetLoadGrams / 1000} kg`}{' '}
+                              × {set.targetRepMin ?? '—'}〜
+                              {set.targetRepMax ?? '—'} 回
+                            </p>
+                          )}
+                          {set.memo && (
+                            <p className="mt-2 whitespace-pre-wrap break-words pl-10 text-sm text-muted-foreground">
+                              {set.memo}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {exercise.note && (
+                      <p className="mt-4 whitespace-pre-wrap break-words rounded-xl border p-3 text-sm text-muted-foreground">
+                        {exercise.note}
+                      </p>
+                    )}
+                    <PastExerciseHistory exerciseId={exercise.exerciseId} localDate={workout.localDate} workoutId={workout.id} startedAt={workout.startedAt} />
+                  </CardContent>
+                </Card>
+              ))}
+              {workout.overallNote && (
+                <Card className="rounded-3xl py-5 shadow-none">
+                  <CardContent className="px-5">
+                    <p className="text-sm font-black">全体メモ</p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                      {workout.overallNote}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
             </>
           )}
         </>

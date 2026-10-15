@@ -192,7 +192,7 @@ export function HistoryBrowser({
             )}
           </div>
         </div>
-        <form className="space-y-3" onSubmit={event => {
+        <form key={`${exerciseName}:${bodyPart}`} className="space-y-3" onSubmit={event => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           const rawName = data.get('exerciseName');
@@ -212,7 +212,15 @@ export function HistoryBrowser({
             {['', '胸', '背中', '肩', '腕', '脚', '体幹', 'その他'].map(part => <option key={part} value={part}>{part || 'すべての部位'}</option>)}
           </select>
           <Button type="submit" className="min-h-11 w-full">種目・部位で絞り込む</Button>
-          {(exerciseName || bodyPart) && <p className="text-xs">適用中：{exerciseName || 'すべての種目'} · {bodyPart || 'すべての部位'}。解除は入力を空・すべてにして再検索。</p>}
+          {(exerciseName || bodyPart) && <>
+            <p className="text-xs">適用中：{exerciseName || 'すべての種目'} · {bodyPart || 'すべての部位'}</p>
+            <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => {
+              setExerciseName(''); setBodyPart('');
+              const url = new URL(window.location.href);
+              url.searchParams.delete('exerciseName'); url.searchParams.delete('bodyPart');
+              window.history.replaceState(null, '', url);
+            }}>条件をクリア</Button>
+          </>}
         </form>
         <details
           onToggle={(event) => setCalendarOpen(event.currentTarget.open)}
@@ -245,7 +253,9 @@ export function HistoryBrowser({
           from={period.from}
           to={period.to}
           emptyMessage={
-            status === 'completed'
+            exerciseName || bodyPart
+              ? '指定した種目・部位に一致する記録がありません'
+              : status === 'completed'
               ? 'この期間の完了した記録はありません'
               : 'この期間の入力途中の記録はありません'
           }

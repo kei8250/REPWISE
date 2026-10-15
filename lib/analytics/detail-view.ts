@@ -13,6 +13,11 @@ export function normalizedBodyPart(bodyPart: string) {
   return bodyPart.trim() && bodyPart !== 'unknown' ? bodyPart.trim() : 'その他';
 }
 
+export function analyticsRangeFromSearch(search: string): AnalyticsRange {
+  const value = new URLSearchParams(search).get('range');
+  return value === '7d' || value === '90d' || value === 'all' ? value : '30d';
+}
+
 export function analyticsExerciseIdFromSearch(search: string) {
   const value = new URLSearchParams(search).get('exerciseId');
   return value?.trim() || null;

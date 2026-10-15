@@ -17,7 +17,7 @@ import { ExerciseSettingsReference } from './exercise-settings-reference';
 import { WorkoutSetRow } from './workout-set-row';
 import { ExerciseProgression } from './exercise-progression';
 import { useExerciseHistory } from '@/hooks/use-exercise-history';
-import { referenceForSet } from '@/lib/workouts/history';
+import { referenceForSet, describeSetReferences } from '@/lib/workouts/history';
 import { ExerciseHistory } from './exercise-history';
 
 export function WorkoutExercise({
@@ -159,6 +159,7 @@ export function WorkoutExercise({
       <ExerciseProgression
         exercise={exercise}
         state={progression}
+        referenceSummary={describeSetReferences(history.references ?? history.items, exercise.sets, history.status)}
         onRetry={onRetryProgression}
         onChange={onChange}
       />

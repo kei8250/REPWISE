@@ -88,3 +88,17 @@ export function targetFromReference(set: WorkoutSet, reference: WorkoutSet): Wor
   return { ...set, targetLoadGrams: reference.actualLoadGrams,
     targetRepMin: reference.actualReps, targetRepMax: reference.actualReps };
 }
+
+// Use the same role/position/load-basis matching as the set cards.
+export function describeSetReferences(entries: ExerciseHistoryEntry[], sets: WorkoutSet[], status: 'loading' | 'success' | 'error') {
+  if (status === 'loading') return { label: 'セット別の前回実績を確認中', detail: '' };
+  if (status === 'error') return { label: '前回実績を取得できませんでした', detail: '過去の記録から再試行してください。記録がないとは限りません。' };
+  const matched = sets.filter(set => referenceForSet(entries, set, sets));
+  if (matched.length) return {
+    label: 'セット別の前回実績を参照中',
+    detail: `${matched.length} / ${sets.length}セットを参照できます。` + (matched.length < sets.length ? '参照できないセットには、有効な完了実績がないか、役割・セット位置・重量基準が一致する記録がありません。' : '日付・実績・メモは各セットで確認できます。'),
+  };
+  return entries.length
+    ? { label: '比較条件に合う参考実績なし', detail: '有効な完了実績がないか、役割・セット位置・重量基準が一致する記録がありません。過去のメモは履歴から確認できます。' }
+    : { label: '参考記録なし', detail: '参照できる過去の完了実績はありません。過去のメモは履歴から確認できます。' };
+}

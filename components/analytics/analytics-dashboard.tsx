@@ -2,7 +2,7 @@
 
 import { SetProgressionProposals } from '@/components/workouts/set-progression-proposals';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -28,6 +28,7 @@ import {
   ALL_BODY_PARTS,
   analyticsBodyParts,
   analyticsExerciseIdFromSearch,
+  analyticsRangeFromSearch,
   filterAnalyticsExercises,
   formatKilograms,
   formatPersonalRecordValue,
@@ -42,7 +43,6 @@ import {
 import { loadAnalyticsDetail } from '@/lib/analytics/detail-cache';
 import {
   ANALYTICS_RANGES,
-  type AnalyticsRange,
   type AnalyticsSnapshot,
   type ExerciseAnalytics,
 } from '@/lib/analytics/model';
@@ -587,8 +587,15 @@ export function AnalyticsDataView({
   );
 }
 
+function subscribeAnalyticsRange(update: () => void) {
+  window.addEventListener('popstate', update);
+  window.addEventListener('repwise-analytics-range', update);
+  return () => { window.removeEventListener('popstate', update); window.removeEventListener('repwise-analytics-range', update); };
+}
+function selectedAnalyticsRange() { return analyticsRangeFromSearch(window.location.search); }
+
 export function AnalyticsDashboard() {
-  const [range, setRange] = useState<AnalyticsRange>('30d');
+  const range = useSyncExternalStore(subscribeAnalyticsRange, selectedAnalyticsRange, () => '30d' as const);
   const [state, setState] = useState<AnalyticsLoadState>({
     status: 'loading',
     data: null,
@@ -676,7 +683,10 @@ export function AnalyticsDashboard() {
               onClick={() => {
                 if (item !== range) {
                   setState({ status: 'loading', data: null });
-                  setRange(item);
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('range', item);
+                  window.history.replaceState(window.history.state, '', url);
+                  window.dispatchEvent(new Event('repwise-analytics-range'));
                 }
               }}
               className="min-h-11 rounded-xl px-1 text-sm font-bold text-muted-foreground transition aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm"

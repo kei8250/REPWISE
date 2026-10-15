@@ -32,7 +32,9 @@ export function ExerciseProgression({
   state,
   onRetry,
   onChange,
+  referenceSummary,
 }: {
+  referenceSummary?: { label: string; detail: string };
   exercise: WorkoutExercise;
   state: ExerciseProgressionLoadState;
   onRetry: () => void;
@@ -98,13 +100,15 @@ export function ExerciseProgression({
         <div className="min-w-0">
           <p className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
             <History className="size-3.5" /> 目標の参考実績
-            {summary.previous && (
+            {!referenceSummary && summary.previous && (
               <span className="font-normal">
                 {shortDate(summary.previous.localDate)}
               </span>
             )}
           </p>
-          {summary.previous ? (
+          {referenceSummary ? (
+            <div className="mt-1"><p className="text-sm font-semibold">{referenceSummary.label}</p>{referenceSummary.detail && <p className="mt-1 text-xs text-muted-foreground">{referenceSummary.detail}</p>}</div>
+          ) : summary.previous ? (
             <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
               <span className="font-black">{summary.previous.loadLabel}</span>
               <span className="text-sm font-bold">
@@ -125,9 +129,9 @@ export function ExerciseProgression({
               : state.recommendation.decision.setDecisions?.length ? 'セット別に提案しています' : '自動提案を保留'}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            参照：
+            自動提案の判定対象：
             {state.recommendation.performance?.workoutLocalDate ??
-              '有効な完了実績なし'}
+              '種目全体の判定条件に合う実績なし（セット別の参考実績とは別です）'}
             。提案は既存の目標へ自動反映されません。
           </p>
           {summary.suggestion &&

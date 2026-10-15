@@ -200,7 +200,10 @@ export function WorkoutProgressionSummary({
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {progressionReasonLabel(exercise.decision.reasonCode)}
                         </p>
-                        <ProgressionEvidence performance={exercise.performance} profile={exercise.profile} />
+                        <details className="mt-2 rounded-xl border p-3">
+                          <summary className="min-h-11 cursor-pointer py-3 text-xs font-bold">判定の根拠・ルールを確認</summary>
+                          <ProgressionEvidence performance={exercise.performance} profile={exercise.profile} />
+                        </details>
                         <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
                           <span
                             className={`font-black ${exercise.stagnation.status === 'progressing' ? 'text-emerald-700' : exercise.stagnation.status === 'stagnating' ? 'text-amber-700' : 'text-muted-foreground'}`}

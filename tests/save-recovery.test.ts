@@ -13,6 +13,7 @@ import {
 import {
   mergeVisibleWorkouts,
   loadVisibleWorkouts,
+  loadVisibleWorkoutPage,
 } from '@/lib/workouts/visible-workouts';
 import {
   getSyncIdleMs,
@@ -297,4 +298,27 @@ it('同期待ちの履歴も同じ種目の名前・部位で絞り込み、別�
   expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '新ベンチ', bodyPart: '胸' }, true, masters)).toHaveLength(1);
   expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '旧ベンチ', bodyPart: '背中' }, true, masters)).toHaveLength(0);
   expect(mergeVisibleWorkouts([], [draft(workout)], [], 'completed', { exerciseName: '旧ベンチ' }, false)).toHaveLength(1);
+});
+
+
+it('先頭ページが削除待ちの記録だけでも、後ろの入力途中の記録まで読み込む', async () => {
+  const originals = Array.from({ length: 12 }, (_, index) => ({ ...completed(), id: `draft-${String(index).padStart(2, '0')}`, status: 'active' as const, endedAt: null }));
+  for (const workout of originals.slice(4)) await saveWorkoutDraftAndEnqueueMutation({ ...workout, deletedAt: startedAt }, 'delete');
+  list.mockImplementation(async (_status, limit = 30, _fetcher, filter = {}) => [...originals].reverse().slice(filter.offset ?? 0, (filter.offset ?? 0) + limit).map(workout => ({ id: workout.id, name: workout.name, status: workout.status, localDate: workout.localDate, startedAt: workout.startedAt, endedAt: null, exerciseCount: 0, setCount: 0, completedSetCount: 0, totalVolumeGrams: 0 })));
+  const page = await loadVisibleWorkoutPage('active', 8);
+  expect(page.items.map(item => item.id)).toEqual(['draft-03', 'draft-02', 'draft-01', 'draft-00']);
+  expect(page.serverCount).toBe(12);
+  expect(page.hasMore).toBe(false);
+});
+
+
+it('多数のページを再取得しても1回のAPI取得件数を上限内に保つ', async () => {
+  const originals = Array.from({ length: 80 }, (_, index) => ({ ...completed(), id: `draft-${String(80-index).padStart(2, '0')}`, status: 'active' as const, endedAt: null }));
+  list.mockImplementation(async (_status, limit = 30, _fetcher, filter = {}) => originals.slice(filter.offset ?? 0, (filter.offset ?? 0) + limit).map(workout => ({ id: workout.id, name: workout.name, status: workout.status, localDate: workout.localDate, startedAt: workout.startedAt, endedAt: null, exerciseCount: 0, setCount: 0, completedSetCount: 0, totalVolumeGrams: 0 })));
+  const page = await loadVisibleWorkoutPage('active', 48);
+  expect(page.items).toHaveLength(60);
+  expect(page.items[0].id).toBe('draft-80');
+  expect(page.items[59].id).toBe('draft-21');
+  expect(page.hasMore).toBe(true);
+  expect(list.mock.calls.every(call => (call[1] ?? 0) <= 31)).toBe(true);
 });

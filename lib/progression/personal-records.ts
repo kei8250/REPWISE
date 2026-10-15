@@ -1,3 +1,4 @@
+import { totalReps } from '@/lib/workouts/reps';
 import type { ProgressionPerformanceSet } from './engine';
 
 export const E1RM_MAX_REPS = 12;
@@ -111,7 +112,7 @@ export function evaluatePersonalRecords(
   );
   const currentVolume = currentSets.reduce(
     (total, set) =>
-      total + (set.actualLoadGrams as number) * (set.actualReps as number),
+      total + (set.actualLoadGrams as number) * totalReps(set),
     0,
   );
   const previousMaxLoad = maxOrNull(
@@ -133,7 +134,7 @@ export function evaluatePersonalRecords(
         sets.reduce(
           (total, set) =>
             total +
-            (set.actualLoadGrams as number) * (set.actualReps as number),
+            (set.actualLoadGrams as number) * totalReps(set),
           0,
         ),
       ),

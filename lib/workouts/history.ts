@@ -1,3 +1,4 @@
+import { repsLabel } from './reps';
 import type { WorkoutSet } from './types';
 
 export interface WorkoutHistoryFilter {
@@ -50,9 +51,9 @@ export function previousSetAt(
 }
 
 export function setPerformanceLabel(
-  set: Pick<WorkoutSet, 'actualLoadGrams' | 'actualReps'>,
+  set: Pick<WorkoutSet, 'actualLoadGrams' | 'actualReps' | 'actualRepsLeft' | 'actualRepsRight'>,
 ) {
-  return `${set.actualLoadGrams === null ? '—' : `${set.actualLoadGrams / 1000} kg`} × ${set.actualReps ?? '—'} 回`;
+  return `${set.actualLoadGrams === null ? '—' : `${set.actualLoadGrams / 1000} kg`} × ${repsLabel(set)}`;
 }
 
 // Keep positions stable and reject planned/skipped sets even when they have inputs.

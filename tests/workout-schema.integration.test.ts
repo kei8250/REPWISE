@@ -48,6 +48,7 @@ describe('v2 SQLite schema persistence', () => {
         'utf8',
       ),
     );
+    db.exec(readFileSync(new URL('../drizzle/0006_side_repetitions.sql', import.meta.url), 'utf8'));
     const timestamp = '2026-09-01T09:00:00.000Z';
     db.prepare(
       "INSERT INTO workout (id, owner_id, name, status, local_date, timezone, started_at, overall_note, version, created_at, updated_at) VALUES (?, 'default', ?, 'active', ?, 'Asia/Tokyo', ?, '', 1, ?, ?)",

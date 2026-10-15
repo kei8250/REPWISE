@@ -1,3 +1,4 @@
+import { hasSideReps, repsLabel } from '@/lib/workouts/reps';
 import type {
   ExerciseProgressionRecommendation,
   ProgressionPerformanceSet,
@@ -91,7 +92,7 @@ export function summarizePreviousPerformance(
     return {
       localDate: performance.workoutLocalDate,
       loadLabel: formatLoadGrams(sets[0].actualLoadGrams as number),
-      repsLabel: sets.map((set) => set.actualReps).join(' / '),
+      repsLabel: sets.some(hasSideReps) ? sets.map(repsLabel).join(' · ') : sets.map((set) => set.actualReps).join(' / '),
     };
   }
   return {
@@ -205,6 +206,10 @@ export function compareWorkingSet(
   }
   const repDifference =
     (current.actualReps as number) - (previous.actualReps as number);
+  if (hasSideReps(current) && hasSideReps(previous) && current.actualRepsLeft != null && current.actualRepsRight != null && previous.actualRepsLeft != null && previous.actualRepsRight != null) {
+    const delta = (value: number) => `${value > 0 ? '+' : value === 0 ? '±' : ''}${value}回`;
+    return { status: repDifference > 0 ? 'above' : repDifference < 0 ? 'below' : 'equal', label: `前回比：右 ${delta(current.actualRepsRight - previous.actualRepsRight)} / 左 ${delta(current.actualRepsLeft - previous.actualRepsLeft)}` };
+  }
   if (repDifference === 0) return { status: 'equal', label: '前回同等' };
   const sign = repDifference > 0 ? '+' : '';
   return {

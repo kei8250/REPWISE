@@ -31,7 +31,8 @@ export function isUsableActiveWorkoutDraft(
   return (
     draft?.workoutId === workoutId &&
     draft.draftStatus === 'active' &&
-    draft.workout.status === 'active'
+    draft.workout.status === 'active' &&
+    !draft.workout.deletedAt
   );
 }
 

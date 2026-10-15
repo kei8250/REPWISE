@@ -1,5 +1,6 @@
 'use client';
 
+import { reportInvalidWorkoutInput } from './validated-number-input';
 import { Plus, Save, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -181,7 +182,7 @@ export function CompletedWorkoutEditor({
         </Button>
         <Button
           type="button"
-          onClick={onSave}
+          onClick={() => { if (!reportInvalidWorkoutInput()) onSave(); }}
           disabled={saving || !workout.name.trim()}
         >
           <Save /> {saving ? '保存中…' : '変更を保存'}

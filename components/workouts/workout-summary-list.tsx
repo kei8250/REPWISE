@@ -1,5 +1,8 @@
 'use client';
 
+import { SwipeDeleteRow } from './swipe-delete-row';
+import { deleteActiveWorkout, restoreActiveWorkout } from '@/lib/workouts/draft-deletion';
+import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -10,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { loadVisibleWorkouts } from '@/lib/workouts/visible-workouts';
+import { loadVisibleWorkoutPage as loadVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { workoutRoute } from '@/lib/routes';
 
@@ -39,6 +42,9 @@ export function WorkoutSummaryList({
   exerciseName?: string;
   bodyPart?: string;
 }) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState<{ id: string; name: string; pending: boolean; failed: boolean } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
@@ -48,6 +54,7 @@ export function WorkoutSummaryList({
   const [serverAvailable, setServerAvailable] = useState(true);
   const pageSize = 8;
   const [page, setPage] = useState(0);
+  const requestGeneration = useRef(0);
   const pageHeading = useRef<HTMLParagraphElement>(null);
   const switchPage = (next: number) => {
     setPage(next);
@@ -57,36 +64,41 @@ export function WorkoutSummaryList({
     });
   };
   const [error, setError] = useState<string | null>(null);
-  const load = () => {
+  const load = (desiredPage = 0) => {
+    const generation = ++requestGeneration.current;
     setLoading(true);
     setError(null);
-    void loadVisibleWorkouts(status, pageSize, {
+    void loadVisibleWorkouts(status, (desiredPage + 1) * pageSize, {
       from: localDate ?? from,
       to: localDate ?? to,
       exerciseName, bodyPart,
     })
       .then((loaded) => {
+        if (requestGeneration.current !== generation) return;
         setItems(loaded.items);
+        setPage(Math.min(desiredPage, Math.max(0, Math.ceil(loaded.items.length / pageSize) - 1)));
         setHasMore(loaded.hasMore);
         setServerOffset(loaded.serverCount);
         setServerAvailable(loaded.serverAvailable);
       })
-      .catch((cause) =>
+      .catch((cause) => {
+        if (requestGeneration.current !== generation) return;
         setError(
           cause instanceof Error ? cause.message : '履歴を読み込めませんでした',
-        ),
-      )
-      .finally(() => setLoading(false));
+        );
+      })
+      .finally(() => { if (requestGeneration.current === generation) setLoading(false); });
   };
   useEffect(() => {
     let alive = true;
+    const generation = ++requestGeneration.current;
     void loadVisibleWorkouts(status, pageSize, {
       from: localDate ?? from,
       to: localDate ?? to,
       exerciseName, bodyPart,
     })
       .then((loaded) => {
-        if (alive) {
+        if (alive && requestGeneration.current === generation) {
           setItems(loaded.items);
           setHasMore(loaded.hasMore);
           setServerOffset(loaded.serverCount);
@@ -94,7 +106,7 @@ export function WorkoutSummaryList({
         }
       })
       .catch((cause) => {
-        if (alive)
+        if (alive && requestGeneration.current === generation)
           setError(
             cause instanceof Error
               ? cause.message
@@ -102,7 +114,7 @@ export function WorkoutSummaryList({
           );
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (alive && requestGeneration.current === generation) setLoading(false);
       });
     return () => {
       alive = false;
@@ -144,30 +156,65 @@ export function WorkoutSummaryList({
       setLoadingMore(false);
     }
   };
+  const remove = async (item: WorkoutSummary) => {
+    if (deleting || loadingMore) return;
+    setDeleting(item.id); setDeleteError(null);
+    try {
+      await deleteActiveWorkout(item.id);
+      setItems(previous => previous.filter(row => row.id !== item.id));
+      if (page > 0 && items.length - 1 <= page * pageSize) setPage(page - 1);
+      setDeleted({ id: item.id, name: item.name, pending: true, failed: false });
+      const result = await syncPendingWorkoutMutations(item.id, { manual: true }).catch(() => null);
+      setDeleted(current => current?.id === item.id ? { ...current, pending: !result || result.remaining > 0, failed: !result || Boolean(result.failed) } : current);
+      if (result && result.remaining === 0) load(page);
+      else { setServerOffset(0); setHasMore(true); }
+
+    } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : '削除を保存できませんでした'); }
+    finally { setDeleting(null); }
+  };
+  const undo = async () => {
+    if (!deleted || deleting) return;
+    const id = deleted.id;
+    setDeleting(id); setDeleteError(null);
+    try {
+      await restoreActiveWorkout(id);
+      setDeleted(null);
+      await syncPendingWorkoutMutations(id, { manual: true }).catch(() => undefined);
+      load(page);
+    } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : '削除を取り消せませんでした'); }
+    finally { setDeleting(null); }
+  };
+  const deletionNotice = <>
+    {deleteError && <p role="alert" className="rounded-xl border border-destructive p-3 text-sm text-destructive">{deleteError}</p>}
+    {deleted && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card p-3" aria-live="polite"><div className="min-w-0 text-xs"><p className="break-words font-bold">「{deleted.name}」を削除しました</p><p>{deleted.failed ? '端末で削除済み。同期状態は設定で確認できます。' : deleted.pending ? '端末で削除済み・同期待ち' : '削除を同期済み'}</p></div><Button type="button" variant="outline" className="min-h-11" disabled={deleting !== null || loadingMore} onClick={() => void undo()}>削除を取り消す</Button></div>}
+  </>;
   if (loading)
     return (
-      <div className="grid min-h-44 place-items-center">
+      <div>{deletionNotice}<div className="grid min-h-44 place-items-center">
         <LoaderCircle className="size-6 animate-spin text-primary" />
-      </div>
+      </div></div>
     );
   if (error)
     return (
       <div className="rounded-2xl border bg-card p-6 text-center">
         <AlertCircle className="mx-auto text-destructive" />
         <p className="mt-2 text-sm font-semibold">{error}</p>
-        <Button type="button" variant="outline" className="mt-4" onClick={load}>
+        <Button type="button" variant="outline" className="mt-4" onClick={() => load()}>
           再試行
         </Button>
       </div>
     );
   if (!items.length)
     return (
-      <div className="rounded-2xl border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
+      <div>{deletionNotice}<div className="rounded-2xl border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
         {emptyMessage}
-      </div>
+        {hasMore && <Button type="button" variant="outline" className="mt-3 min-h-11" onClick={() => { setPage(0); load(); }}>残りの記録を読み込む</Button>}
+      </div></div>
     );
   return (
     <div className="space-y-3">
+      {deletionNotice}
+      {status === 'active' && <p className="text-xs text-muted-foreground">左へスワイプすると削除ボタンが出ます。「…」からも操作できます。</p>}
       {!serverAvailable && (
         <p className="text-xs text-muted-foreground">
           サーバーに接続できないため、端末の保存済み記録を表示しています。
@@ -180,8 +227,8 @@ export function WorkoutSummaryList({
       {items.slice(page * pageSize, (page + 1) * pageSize).map((item) => {
         const active = item.status === 'active';
         const href = workoutRoute(item.id, item.status);
-        return (
-          <Card key={item.id} className="rounded-2xl py-0 shadow-none">
+        const content = (
+          <Card className={active ? "rounded-none border-0 py-0 shadow-none" : "rounded-2xl py-0 shadow-none"}>
             <CardContent className="flex items-center gap-4 p-4">
               <span
                 className={`grid size-10 shrink-0 place-items-center rounded-xl ${active ? 'bg-accent text-accent-foreground' : 'bg-primary/10 text-primary'}`}
@@ -224,6 +271,7 @@ export function WorkoutSummaryList({
             </CardContent>
           </Card>
         );
+        return active ? <SwipeDeleteRow key={item.id} label={item.name} busy={deleting !== null || loadingMore} onDelete={() => void remove(item)}>{content}</SwipeDeleteRow> : <div key={item.id}>{content}</div>;
       })}
       {moreError && (
         <p role="alert" className="text-sm text-destructive">
@@ -237,7 +285,7 @@ export function WorkoutSummaryList({
         <Button
           type="button"
           variant="outline"
-          disabled={page === 0 || loadingMore}
+          disabled={page === 0 || loadingMore || deleting !== null}
           onClick={() => switchPage(page - 1)}
         >
           前の8件
@@ -247,7 +295,7 @@ export function WorkoutSummaryList({
           type="button"
           variant="outline"
           disabled={
-            loadingMore || (!hasMore && (page + 1) * pageSize >= items.length)
+            deleting !== null || loadingMore || (!hasMore && (page + 1) * pageSize >= items.length)
           }
           onClick={() => {
             if (!hasMore || (page + 2) * pageSize <= items.length)

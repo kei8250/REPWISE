@@ -35,6 +35,7 @@ export function ExercisePicker({
   const [bodyPart, setBodyPart] = useState('すべて');
   const [newName, setNewName] = useState('');
   const [newBodyPart, setNewBodyPart] = useState('その他');
+  const [newRepMode, setNewRepMode] = useState<'standard' | 'per_side'>('standard');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,12 +96,14 @@ export function ExercisePicker({
       const created = await createCachedExerciseMaster({
         name: newName.trim(),
         bodyPart: newBodyPart,
+        repMode: newRepMode,
       });
       setItems((current) => [
         ...current.filter((item) => item.id !== created.id),
         created,
       ]);
       setNewName('');
+      setNewRepMode('standard');
       onSelect(created);
       onOpenChange(false);
     } catch (cause) {
@@ -171,7 +174,7 @@ export function ExercisePicker({
                   <span>
                     <span className="block font-bold">{item.name}</span>
                     <span className="block text-xs font-normal text-muted-foreground">
-                      {item.bodyPart}
+                      {item.bodyPart}{item.repMode === 'per_side' ? ' · 左右別' : ''}
                     </span>
                   </span>
                   {selected ? (
@@ -190,6 +193,10 @@ export function ExercisePicker({
           )}
           <div className="rounded-2xl bg-muted p-4">
             <p className="mb-3 text-sm font-bold">新しい種目を作成</p>
+            <label className="mb-2 block text-sm font-bold" htmlFor="new-exercise-rep-mode">回数の記録方式</label>
+            <select id="new-exercise-rep-mode" value={newRepMode} onChange={event => setNewRepMode(event.target.value === 'per_side' ? 'per_side' : 'standard')} className="mb-3 h-11 w-full rounded-lg border bg-background px-3 text-base">
+              <option value="standard">通常 · 回数を1つ入力</option><option value="per_side">左右別 · 共通の重量と右・左の回数</option>
+            </select>
             <div className="grid gap-2 sm:grid-cols-[1fr_130px_auto]">
               <Input
                 value={newName}

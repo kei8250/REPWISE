@@ -1,3 +1,4 @@
+import type { RepMode } from './reps';
 import type { WorkoutHistoryFilter } from './history';
 import type {
   CreateWorkoutInput,
@@ -48,6 +49,7 @@ type ExerciseRow = {
   position: number;
   status: WorkoutExercise['status'];
   exercise_name_snapshot: string;
+  rep_mode: RepMode;
   note: string;
   started_at: string | null;
   completed_at: string | null;
@@ -66,6 +68,8 @@ type SetRow = {
   target_rep_max: number | null;
   actual_load_grams: number | null;
   actual_reps: number | null;
+  actual_reps_left: number | null;
+  actual_reps_right: number | null;
   memo: string;
   completed_at: string | null;
   created_at: string;
@@ -91,7 +95,7 @@ export async function listExerciseMasters(
   const result = await db
     .prepare(`
     SELECT id, name, normalized_name, body_part, measurement_type, default_rep_min,
-           default_rep_max, default_working_sets, default_increment_grams, default_rest_seconds
+           default_rep_max, default_working_sets, default_increment_grams, default_rest_seconds, rep_mode
     FROM exercise_master
     WHERE owner_id = ? AND archived_at IS NULL
     ORDER BY body_part, name
@@ -104,6 +108,7 @@ export async function listExerciseMasters(
     normalizedName: String(row.normalized_name),
     bodyPart: String(row.body_part),
     measurementType: 'weight_reps',
+    ...(row.rep_mode === 'per_side' ? { repMode: 'per_side' as const } : {}),
     defaultRepMin:
       row.default_rep_min === null ? null : Number(row.default_rep_min),
     defaultRepMax:
@@ -136,8 +141,8 @@ export async function createExerciseMaster(
       .prepare(`
       INSERT INTO exercise_master
         (id, owner_id, name, normalized_name, body_part, measurement_type, default_rep_min, default_rep_max,
-         default_working_sets, default_increment_grams, default_rest_seconds, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'weight_reps', 8, 12, 3, 2500, 90, ?, ?)
+         default_working_sets, default_increment_grams, default_rest_seconds, created_at, updated_at, rep_mode)
+      VALUES (?, ?, ?, ?, ?, 'weight_reps', 8, 12, 3, 2500, 90, ?, ?, ?)
     `)
       .bind(
         id,
@@ -147,6 +152,7 @@ export async function createExerciseMaster(
         input.bodyPart,
         createdAt,
         createdAt,
+        input.repMode ?? 'standard',
       )
       .run();
   } catch (error) {
@@ -162,6 +168,7 @@ export async function createExerciseMaster(
     name: input.name,
     normalizedName,
     bodyPart: input.bodyPart,
+    ...(input.repMode ? { repMode: input.repMode } : {}),
     measurementType: 'weight_reps',
     defaultRepMin: 8,
     defaultRepMax: 12,
@@ -226,7 +233,7 @@ export async function listWorkouts(
            COUNT(DISTINCT we.id) AS exercise_count,
            COUNT(ws.id) AS set_count,
            SUM(CASE WHEN ws.status = 'completed' THEN 1 ELSE 0 END) AS completed_set_count,
-           COALESCE(SUM(CASE WHEN ws.status = 'completed' THEN ws.actual_load_grams * ws.actual_reps ELSE 0 END), 0) AS total_volume_grams
+           COALESCE(SUM(CASE WHEN ws.status = 'completed' THEN ws.actual_load_grams * (CASE WHEN ws.actual_reps_left IS NOT NULL OR ws.actual_reps_right IS NOT NULL THEN COALESCE(ws.actual_reps_left, 0) + COALESCE(ws.actual_reps_right, 0) ELSE ws.actual_reps END) ELSE 0 END), 0) AS total_volume_grams
     FROM workout w
     LEFT JOIN workout_exercise we ON we.workout_id = w.id
     LEFT JOIN workout_set ws ON ws.workout_exercise_id = we.id AND ws.deleted_at IS NULL
@@ -265,7 +272,7 @@ export async function getWorkout(
   if (!row) return null;
   const exerciseResult = await db
     .prepare(`
-    SELECT id, exercise_id, position, status, exercise_name_snapshot, note, started_at, completed_at, created_at, updated_at
+    SELECT id, exercise_id, position, status, exercise_name_snapshot, rep_mode, note, started_at, completed_at, created_at, updated_at
     FROM workout_exercise WHERE workout_id = ? ORDER BY position, created_at
   `)
     .bind(id)
@@ -273,7 +280,7 @@ export async function getWorkout(
   const setResult = await db
     .prepare(`
     SELECT ws.id, ws.workout_exercise_id, ws.position, ws.status, ws.set_type, ws.target_load_grams,
-           ws.target_rep_min, ws.target_rep_max, ws.actual_load_grams, ws.actual_reps, ws.memo,
+           ws.target_rep_min, ws.target_rep_max, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right, ws.memo,
            ws.completed_at, ws.created_at, ws.updated_at
     FROM workout_set ws
     JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -299,6 +306,7 @@ export async function getWorkout(
       actualLoadGrams:
         set.actual_load_grams === null ? null : Number(set.actual_load_grams),
       actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
       memo: set.memo,
       completedAt: set.completed_at,
       createdAt: set.created_at,
@@ -327,6 +335,7 @@ export async function getWorkout(
       position: Number(exercise.position),
       status: exercise.status,
       exerciseNameSnapshot: exercise.exercise_name_snapshot,
+      ...(exercise.rep_mode === 'per_side' ? { repMode: 'per_side' as const } : {}),
       note: exercise.note,
       startedAt: exercise.started_at,
       completedAt: exercise.completed_at,
@@ -392,10 +401,10 @@ function makeServerSnapshot(
   const source = tombstoneOperation && existing ? existing : incoming;
   return {
     ...source,
-    status: completed || tombstoneOperation ? 'completed' : 'active',
+    status: tombstoneOperation ? source.status : completed ? 'completed' : 'active',
     startedAt: existing?.startedAt ?? incoming.startedAt,
-    endedAt:
-      completed || tombstoneOperation
+    endedAt: tombstoneOperation ? source.endedAt :
+      completed
         ? (source.endedAt ?? existing?.endedAt ?? updatedAt)
         : null,
     version: existing ? existing.version + 1 : 1,
@@ -509,8 +518,8 @@ function snapshotStatements(
       db
         .prepare(
           `INSERT INTO workout_exercise
-            (id, workout_id, exercise_id, position, status, exercise_name_snapshot, note, started_at, completed_at, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            (id, workout_id, exercise_id, position, status, exercise_name_snapshot, rep_mode, note, started_at, completed_at, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE EXISTS (
              SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
            )`,
@@ -522,6 +531,7 @@ function snapshotStatements(
           exercise.position,
           exercise.status,
           exercise.exerciseNameSnapshot,
+          exercise.repMode ?? 'standard',
           exercise.note,
           exercise.startedAt,
           exercise.completedAt,
@@ -537,8 +547,8 @@ function snapshotStatements(
           .prepare(
             `INSERT INTO workout_set
               (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max,
-               actual_load_grams, actual_reps, memo, completed_at, created_at, updated_at)
-             SELECT ?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?
+               actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at)
+             SELECT ?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
              WHERE EXISTS (
                SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?
              )`,
@@ -553,6 +563,8 @@ function snapshotStatements(
             set.targetRepMax,
             set.actualLoadGrams,
             set.actualReps,
+            set.actualRepsLeft ?? null,
+            set.actualRepsRight ?? null,
             set.memo,
             set.completedAt,
             set.createdAt,
@@ -632,14 +644,15 @@ function assertMutationCanApply(
   const needsActive =
     mutation.operation === 'replace' || mutation.operation === 'complete';
   const needsCompleted =
-    mutation.operation === 'edit' || mutation.operation === 'delete';
+    mutation.operation === 'edit';
   if (needsActive && (existing.status !== 'active' || existing.deletedAt))
     throw new WorkoutConflictError('進行中ワークアウトに適用できません');
   if (needsCompleted && (existing.status !== 'completed' || existing.deletedAt))
     throw new WorkoutConflictError('完了済みワークアウトに適用できません');
+  if (mutation.operation === 'delete' && (!['active', 'completed'].includes(existing.status) || existing.deletedAt)) throw new WorkoutConflictError('削除できる記録ではありません');
   if (
     mutation.operation === 'restore' &&
-    (existing.status !== 'completed' || !existing.deletedAt)
+    (!['active', 'completed'].includes(existing.status) || !existing.deletedAt)
   )
     throw new WorkoutConflictError('削除済みワークアウトに適用できません');
 }
@@ -724,8 +737,10 @@ function processedMutationGate(
   }
   const operationPredicate =
     mutation.operation === 'restore'
-      ? "status = 'completed' AND deleted_at IS NOT NULL"
-      : mutation.operation === 'edit' || mutation.operation === 'delete'
+      ? "status IN ('active', 'completed') AND deleted_at IS NOT NULL"
+      : mutation.operation === 'delete'
+        ? "status IN ('active', 'completed') AND deleted_at IS NULL"
+        : mutation.operation === 'edit'
         ? "status = 'completed' AND deleted_at IS NULL"
         : "status = 'active' AND deleted_at IS NULL";
   return db
@@ -905,8 +920,8 @@ export async function replaceWorkout(
       db
         .prepare(`
       INSERT INTO workout_exercise
-        (id, workout_id, exercise_id, position, status, exercise_name_snapshot, note, started_at, completed_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, workout_id, exercise_id, position, status, exercise_name_snapshot, rep_mode, note, started_at, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
         .bind(
           exercise.id,
@@ -915,6 +930,7 @@ export async function replaceWorkout(
           exercise.position,
           exercise.status,
           exercise.exerciseNameSnapshot,
+          exercise.repMode ?? 'standard',
           exercise.note,
           exercise.startedAt,
           exercise.completedAt,
@@ -928,8 +944,8 @@ export async function replaceWorkout(
           .prepare(`
         INSERT INTO workout_set
           (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max,
-           actual_load_grams, actual_reps, memo, completed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
           .bind(
             set.id,
@@ -941,6 +957,8 @@ export async function replaceWorkout(
             set.targetRepMax,
             set.actualLoadGrams,
             set.actualReps,
+            set.actualRepsLeft ?? null,
+            set.actualRepsRight ?? null,
             set.memo,
             set.completedAt,
             set.createdAt,
@@ -985,7 +1003,7 @@ export async function addWorkoutExercise(
   await assertExerciseMastersExist(db, [exercise]);
   await db
     .prepare(
-      `INSERT INTO workout_exercise (id, workout_id, exercise_id, position, status, exercise_name_snapshot, note, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO workout_exercise (id, workout_id, exercise_id, position, status, exercise_name_snapshot, rep_mode, note, started_at, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       exercise.id,
@@ -994,6 +1012,7 @@ export async function addWorkoutExercise(
       exercise.position,
       exercise.status,
       exercise.exerciseNameSnapshot,
+      exercise.repMode ?? 'standard',
       exercise.note,
       exercise.startedAt,
       exercise.completedAt,
@@ -1015,11 +1034,12 @@ export async function updateWorkoutExercise(
     throw new WorkoutConflictError('種目IDが一致しません');
   const result = await db
     .prepare(
-      `UPDATE workout_exercise SET position = ?, status = ?, note = ?, started_at = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_id = ?`,
+      `UPDATE workout_exercise SET position = ?, status = ?, rep_mode = ?, note = ?, started_at = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_id = ?`,
     )
     .bind(
       exercise.position,
       exercise.status,
+      exercise.repMode ?? 'standard',
       exercise.note,
       exercise.startedAt,
       exercise.completedAt,
@@ -1053,16 +1073,16 @@ export async function addWorkoutSet(
   workoutExerciseId: string,
   value: unknown,
 ) {
-  const set = validateWorkoutSet(value);
   const owner = await db
-    .prepare('SELECT id FROM workout_exercise WHERE id = ? AND workout_id = ?')
+    .prepare('SELECT id, rep_mode FROM workout_exercise WHERE id = ? AND workout_id = ?')
     .bind(workoutExerciseId, workoutId)
-    .first();
+    .first<{ id: string; rep_mode: RepMode }>();
   if (!owner)
     throw new WorkoutNotFoundError('ワークアウト種目が見つかりません');
+  const set = validateWorkoutSet(value, 'set', owner.rep_mode);
   await db
     .prepare(
-      `INSERT INTO workout_set (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max, actual_load_grams, actual_reps, memo, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO workout_set (id, workout_exercise_id, position, status, set_type, target_load_grams, target_rep_min, target_rep_max, actual_load_grams, actual_reps, actual_reps_left, actual_reps_right, memo, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       set.id,
@@ -1074,6 +1094,8 @@ export async function addWorkoutSet(
       set.targetRepMax,
       set.actualLoadGrams,
       set.actualReps,
+      set.actualRepsLeft ?? null,
+      set.actualRepsRight ?? null,
       set.memo,
       set.completedAt,
       set.createdAt,
@@ -1090,12 +1112,14 @@ export async function updateWorkoutSet(
   setId: string,
   value: unknown,
 ) {
-  const set = validateWorkoutSet(value);
+  const exercise = (await getWorkout(db, workoutId))?.exercises.find(item => item.id === workoutExerciseId);
+  if (!exercise) throw new WorkoutNotFoundError('ワークアウト種目が見つかりません');
+  const set = validateWorkoutSet(value, 'set', exercise.repMode);
   if (set.id !== setId)
     throw new WorkoutConflictError('セットIDが一致しません');
   const result = await db
     .prepare(
-      `UPDATE workout_set SET position = ?, status = ?, target_load_grams = ?, target_rep_min = ?, target_rep_max = ?, actual_load_grams = ?, actual_reps = ?, memo = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_exercise_id = ? AND EXISTS (SELECT 1 FROM workout_exercise WHERE id = ? AND workout_id = ?)`,
+      `UPDATE workout_set SET position = ?, status = ?, target_load_grams = ?, target_rep_min = ?, target_rep_max = ?, actual_load_grams = ?, actual_reps = ?, actual_reps_left = ?, actual_reps_right = ?, memo = ?, completed_at = ?, updated_at = ? WHERE id = ? AND workout_exercise_id = ? AND EXISTS (SELECT 1 FROM workout_exercise WHERE id = ? AND workout_id = ?)`,
     )
     .bind(
       set.position,
@@ -1105,6 +1129,8 @@ export async function updateWorkoutSet(
       set.targetRepMax,
       set.actualLoadGrams,
       set.actualReps,
+      set.actualRepsLeft ?? null,
+      set.actualRepsRight ?? null,
       set.memo,
       set.completedAt,
       now(),

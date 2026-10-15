@@ -1,3 +1,4 @@
+import type { RepMode } from './reps';
 export type WorkoutStatus = 'draft' | 'active' | 'completed' | 'abandoned';
 export type WorkoutExerciseStatus =
   | 'planned'
@@ -12,6 +13,7 @@ export interface ExerciseMaster {
   normalizedName: string;
   bodyPart: string;
   measurementType: 'weight_reps';
+  repMode?: RepMode;
   defaultRepMin: number | null;
   defaultRepMax: number | null;
   defaultWorkingSets: number | null;
@@ -29,6 +31,8 @@ export interface WorkoutSet {
   targetRepMax: number | null;
   actualLoadGrams: number | null;
   actualReps: number | null;
+  actualRepsLeft?: number | null;
+  actualRepsRight?: number | null;
   memo: string;
   completedAt: string | null;
   createdAt: string;
@@ -41,6 +45,7 @@ export interface WorkoutExercise {
   position: number;
   status: WorkoutExerciseStatus;
   exerciseNameSnapshot: string;
+  repMode?: RepMode;
   note: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -91,12 +96,13 @@ export interface CreateWorkoutInput {
 }
 
 export interface CreateExerciseMasterInput {
+  repMode?: RepMode;
   id?: string;
   name: string;
   bodyPart: string;
 }
 
-export type UpdateExerciseMasterInput = Pick<ExerciseMaster, 'name' | 'bodyPart' | 'defaultRepMin' | 'defaultRepMax' | 'defaultWorkingSets' | 'defaultIncrementGrams' | 'defaultRestSeconds'>;
+export type UpdateExerciseMasterInput = Pick<ExerciseMaster, 'name' | 'bodyPart' | 'defaultRepMin' | 'defaultRepMax' | 'defaultWorkingSets' | 'defaultIncrementGrams' | 'defaultRestSeconds' | 'repMode'>;
 
 export type WorkoutMutationOperation =
   | 'create'

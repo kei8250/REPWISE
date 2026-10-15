@@ -17,7 +17,7 @@ export async function updateExerciseMaster(
       .prepare(`
       UPDATE exercise_master
       SET name = ?, normalized_name = ?, body_part = ?, default_rep_min = ?, default_rep_max = ?,
-          default_working_sets = ?, default_increment_grams = ?, default_rest_seconds = ?, updated_at = ?
+          default_working_sets = ?, default_increment_grams = ?, default_rest_seconds = ?, rep_mode = COALESCE(?, rep_mode), updated_at = ?
       WHERE id = ? AND owner_id = ? AND archived_at IS NULL
     `)
       .bind(
@@ -29,6 +29,7 @@ export async function updateExerciseMaster(
         value.defaultWorkingSets,
         value.defaultIncrementGrams,
         value.defaultRestSeconds,
+        value.repMode ?? null,
         new Date().toISOString(),
         exerciseId,
         'default',

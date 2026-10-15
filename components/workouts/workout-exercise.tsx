@@ -155,6 +155,7 @@ export function WorkoutExercise({
             <WorkoutSetRow
               key={set.id}
               set={set}
+              repMode={exercise.repMode}
               number={index + 1}
               onChange={updateSet}
               canDelete={exercise.sets.length > 1}

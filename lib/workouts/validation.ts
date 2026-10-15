@@ -1,3 +1,4 @@
+import { minimumSideReps, type RepMode } from './reps';
 import type {
   CreateExerciseMasterInput,
   UpdateExerciseMasterInput,
@@ -181,6 +182,13 @@ export function validateCreateWorkoutInput(value: unknown): CreateWorkoutInput {
   return result;
 }
 
+function repMode(value: unknown, path: string, issues: ValidationIssue[]): RepMode | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'standard' || value === 'per_side') return value;
+  issues.push({ path, message: '回数の記録方式を選び直してください' });
+  return undefined;
+}
+
 export function validateExerciseMasterInput(
   value: unknown,
 ): CreateExerciseMasterInput {
@@ -194,6 +202,7 @@ export function validateExerciseMasterInput(
     id: input.id === undefined ? undefined : id(input.id, 'id', issues),
     name,
     bodyPart,
+    ...(input.repMode === undefined ? {} : { repMode: repMode(input.repMode, 'repMode', issues) }),
   };
   if (issues.length) throw new WorkoutValidationError(issues);
   return result;
@@ -206,6 +215,7 @@ export function validateExerciseMasterUpdate(value: unknown): UpdateExerciseMast
   const result = {
     name: base.name,
     bodyPart: base.bodyPart,
+    ...(base.repMode ? { repMode: base.repMode } : {}),
     defaultRepMin: integer(input.defaultRepMin, 'defaultRepMin', issues, 1, 999, true),
     defaultRepMax: integer(input.defaultRepMax, 'defaultRepMax', issues, 1, 999, true),
     defaultWorkingSets: integer(input.defaultWorkingSets, 'defaultWorkingSets', issues, 1, 30, true),
@@ -217,7 +227,7 @@ export function validateExerciseMasterUpdate(value: unknown): UpdateExerciseMast
   return result;
 }
 
-export function validateWorkoutSet(value: unknown, path = 'set'): WorkoutSet {
+export function validateWorkoutSet(value: unknown, path = 'set', mode: RepMode = 'standard'): WorkoutSet {
   const input = record(value);
   const issues: ValidationIssue[] = [];
   const status = text(
@@ -247,15 +257,8 @@ export function validateWorkoutSet(value: unknown, path = 'set'): WorkoutSet {
     999,
     true,
   );
-  if (
-    targetRepMin !== null &&
-    targetRepMax !== null &&
-    targetRepMin > targetRepMax
-  )
-    issues.push({
-      path: `${path}.targetRepMax`,
-      message: 'rep上限は下限以上にしてください',
-    });
+  // Target ordering is advisory, including already queued legacy snapshots.
+  // The editor fixes ordering before queueing new edits; never rewrite a mutation.
   const result: WorkoutSet = {
     id: id(input.id, `${path}.id`, issues),
     position: integer(input.position, `${path}.position`, issues, 0, 9999) ?? 0,
@@ -297,6 +300,14 @@ export function validateWorkoutSet(value: unknown, path = 'set'): WorkoutSet {
     createdAt: timestamp(input.createdAt, `${path}.createdAt`, issues) ?? '',
     updatedAt: timestamp(input.updatedAt, `${path}.updatedAt`, issues) ?? '',
   };
+  if (mode === 'per_side') {
+    result.actualRepsLeft = integer(input.actualRepsLeft, `${path}.actualRepsLeft`, issues, 1, 999, true);
+    result.actualRepsRight = integer(input.actualRepsRight, `${path}.actualRepsRight`, issues, 1, 999, true);
+    result.actualReps = minimumSideReps(result.actualRepsLeft, result.actualRepsRight);
+    if (status === 'completed' && result.actualReps === null) issues.push({ path, message: '右と左の回数を両方入力してください' });
+  } else if (input.actualRepsLeft != null || input.actualRepsRight != null) {
+    issues.push({ path, message: '左右別の回数は左右別記録の種目で入力してください' });
+  }
   if (
     status === 'completed' &&
     (result.actualLoadGrams === null || result.actualReps === null)
@@ -324,6 +335,7 @@ export function validateWorkoutExercise(
       path: `${path}.status`,
       message: '種目状態が正しくありません',
     });
+  const mode = repMode(input.repMode, `${path}.repMode`, issues);
   const setInputs = Array.isArray(input.sets) ? input.sets : [];
   if (!Array.isArray(input.sets))
     issues.push({ path: `${path}.sets`, message: 'セット一覧が必要です' });
@@ -331,7 +343,7 @@ export function validateWorkoutExercise(
   for (let setIndex = 0; setIndex < setInputs.length; setIndex += 1) {
     try {
       sets.push(
-        validateWorkoutSet(setInputs[setIndex], `${path}.sets.${setIndex}`),
+        validateWorkoutSet(setInputs[setIndex], `${path}.sets.${setIndex}`, mode),
       );
     } catch (error) {
       if (error instanceof WorkoutValidationError) issues.push(...error.issues);
@@ -343,6 +355,7 @@ export function validateWorkoutExercise(
     exerciseId: id(input.exerciseId, `${path}.exerciseId`, issues),
     position: integer(input.position, `${path}.position`, issues, 0, 9999) ?? 0,
     status,
+    ...(mode ? { repMode: mode } : {}),
     exerciseNameSnapshot: text(
       input.exerciseNameSnapshot,
       `${path}.exerciseNameSnapshot`,

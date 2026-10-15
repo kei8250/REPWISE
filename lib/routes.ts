@@ -4,6 +4,7 @@ export const APP_ROUTES = {
   home: '/',
   newWorkout: '/workouts/new',
   history: '/history',
+  activeHistory: '/history?status=active&month=all',
   analytics: '/analytics',
   settings: '/settings',
   analyticsExercise: (exerciseId: string) =>

@@ -413,6 +413,12 @@ function ExerciseSettingsEditor({
           ))}
         </select>
       </div>
+      <label className="block text-sm font-bold" htmlFor="setting-rep-mode">回数の記録方式</label>
+      <select id="setting-rep-mode" value={value.repMode ?? 'standard'} onChange={event => setValue({ ...value, repMode: event.target.value === 'per_side' ? 'per_side' : 'standard' })} className="h-11 w-full rounded-lg border bg-background px-3">
+        <option value="standard">通常</option><option value="per_side">左右別（重量は共通）</option>
+      </select>
+      <p className="text-xs text-muted-foreground">方式の変更は次に追加する種目から反映します。保存済み記録の入力方式と左右の回数は変わりません。</p>
+      {value.defaultRepMin !== null && value.defaultRepMax !== null && value.defaultRepMin > value.defaultRepMax && <p role="alert" className="text-sm text-destructive">rep下限が上限を超えています。下の回数を変更すると範囲を調整できます。</p>}
       <div className="grid grid-cols-2 gap-3">
         {(
           [
@@ -446,12 +452,13 @@ function ExerciseSettingsEditor({
               max={field.max}
               value={value[field.key] ?? ''}
               onChange={(event) =>
-                setValue({
-                  ...value,
-                  [field.key]:
-                    event.target.value === ''
-                      ? null
-                      : Number(event.target.value),
+                setValue(current => {
+                  const next = { ...current, [field.key]: event.target.value === '' ? null : Number(event.target.value) };
+                  if (next.defaultRepMin !== null && next.defaultRepMax !== null && next.defaultRepMin > next.defaultRepMax) {
+                    if (field.key === 'defaultRepMin') next.defaultRepMax = next.defaultRepMin;
+                    if (field.key === 'defaultRepMax') next.defaultRepMin = next.defaultRepMax;
+                  }
+                  return next;
                 })
               }
               className="mt-1"

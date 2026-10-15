@@ -868,3 +868,43 @@ it('役割・回数目標・重量基準をSQLと履歴・判定・分析・コ�
   await updateExerciseMaster(d1, master.id, { ...master, loadBasis: 'per_rep' });
   expect((await getWorkout(d1, snapshot.id))?.exercises[0].sets[0].loadBasis).toBe('paired_total');
 });
+
+it('復旧照合APIは通常取得と区別して削除済み・不存在を返す', async () => {
+  vi.doMock('@/db', () => ({ getD1: () => d1 }));
+  try {
+    const created = await applyWorkoutMutation(d1, mutation('state-create', 'create', workout()));
+    const deleted = await applyWorkoutMutation(d1, mutation('state-delete', 'delete', created.workout));
+    const { GET } = await import('@/app/api/v2/workouts/[id]/sync-state/route');
+    const response = await GET(new Request('http://fixture.test'), { params: Promise.resolve({ id: created.workout.id }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toEqual({ workout: deleted.workout });
+    const missing = await GET(new Request('http://fixture.test'), { params: Promise.resolve({ id: 'does-not-exist' }) });
+    expect(await missing.json()).toEqual({ workout: null });
+    expect(await getWorkout(d1, created.workout.id)).toBeNull();
+  } finally { vi.doUnmock('@/db'); }
+});
+
+it('削除後の古い更新は拒否し、過去の作成再送や重複削除でもサーバーを復活させない', async () => {
+  const create = mutation('late-create', 'create', workout());
+  const created = await applyWorkoutMutation(d1, create);
+  const deletion = mutation('late-delete', 'delete', created.workout);
+  const deleted = await applyWorkoutMutation(d1, deletion);
+  await expect(applyWorkoutMutation(d1, mutation('late-update', 'replace', { ...created.workout, overallNote: '遅れた更新' }))).rejects.toThrow();
+  expect((await applyWorkoutMutation(d1, create)).duplicate).toBe(true);
+  expect((await applyWorkoutMutation(d1, deletion)).duplicate).toBe(true);
+  expect(await getWorkout(d1, created.workout.id, true)).toEqual(deleted.workout);
+});
+
+it('端末で削除待ちの完了記録はサーバー未反映でも分析・PR・履歴傾向の再計算から除外できる', async () => {
+  const completed = await createCompletedWorkout('analytics-local-delete');
+  const { getAnalyticsSnapshot } = await import('@/lib/analytics/server-store');
+  const now = new Date('2026-10-15T00:00:00Z');
+  expect((await getAnalyticsSnapshot(d1, 'all', now)).workouts.completedWorkoutCount).toBe(1);
+  const excluded = await getAnalyticsSnapshot(d1, 'all', now, [completed.workout.id]);
+  expect(excluded.workouts.completedWorkoutCount).toBe(0);
+  expect(excluded.workouts.totalVolumeGramReps).toBe(0);
+  expect(excluded.exercises).toEqual([]);
+  expect(excluded.bodyParts).toEqual([]);
+  expect(await getWorkout(d1, completed.workout.id)).not.toBeNull();
+});

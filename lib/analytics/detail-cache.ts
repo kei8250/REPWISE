@@ -15,6 +15,7 @@ export function createAnalyticsDetailCache(dependencies: Dependencies) {
   >();
   const inFlight = new Map<AnalyticsRange, Promise<AnalyticsSnapshot>>();
 
+  let generation = 0;
   async function load(range: AnalyticsRange, force = false) {
     const hit = cached.get(range);
     if (
@@ -27,7 +28,9 @@ export function createAnalyticsDetailCache(dependencies: Dependencies) {
 
     let request = inFlight.get(range);
     if (!request) {
+      const started = generation;
       request = dependencies.fetch(range).then((value) => {
+        if (started !== generation) return value;
         cached.set(range, {
           value: structuredClone(value),
           savedAt: dependencies.now(),
@@ -45,6 +48,8 @@ export function createAnalyticsDetailCache(dependencies: Dependencies) {
   }
 
   function invalidate(range?: AnalyticsRange) {
+    generation++;
+    inFlight.clear();
     if (range) cached.delete(range);
     else cached.clear();
   }

@@ -170,15 +170,28 @@ export function acceptWorkoutNextTarget(
   );
 }
 
-export function getAnalytics(
+export async function getAnalytics(
   range: AnalyticsRange = '30d',
   fetcher?: FetchLike,
 ) {
-  return request<AnalyticsSnapshot>(
-    `/api/v2/analytics?range=${encodeURIComponent(range)}`,
-    {},
-    fetcher,
-  );
+  const deletedIds = async () => {
+    if (typeof indexedDB === 'undefined') return [];
+    const { readLocalWorkoutSources } = await import('./local-drafts');
+    const { drafts, mutations } = await readLocalWorkoutSources();
+    const deleted = new Set(drafts.filter((draft) => draft.draftStatus === 'deleted' || draft.workout.deletedAt).map((draft) => draft.workoutId));
+    const latest = new Map<string, (typeof mutations)[number]>();
+    for (const mutation of mutations) if ((latest.get(mutation.workoutId)?.sequence ?? -1) < mutation.sequence) latest.set(mutation.workoutId, mutation);
+    for (const [id, mutation] of latest) if (mutation.operation === 'delete' && !drafts.some((draft) => draft.workoutId === id)) deleted.add(id);
+    return [...deleted].sort();
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await deletedIds();
+    const query = new URLSearchParams({ range });
+    for (const id of before) query.append('exclude', id);
+    const result = await request<AnalyticsSnapshot>(`/api/v2/analytics?${query}`, { cache: 'no-store' }, fetcher);
+    if (JSON.stringify(before) === JSON.stringify(await deletedIds())) return result;
+  }
+  throw new Error('削除状態が変更されました。分析を再読み込みしてください。');
 }
 
 export function saveWorkout(workout: Workout, fetcher?: FetchLike) {
@@ -226,4 +239,8 @@ export function getExerciseHistory(
     {},
     fetcher,
   );
+}
+
+export function getWorkoutSyncState(id: string, fetcher?: FetchLike) {
+  return request<{ workout: Workout | null }>(`/api/v2/workouts/${encodeURIComponent(id)}/sync-state`, { cache: 'no-store' }, fetcher);
 }

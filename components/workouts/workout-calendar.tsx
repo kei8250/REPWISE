@@ -42,7 +42,6 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
     if (!today) return;
     let alive = true;
     void (async () => {
-      const local = await readLocalWorkoutSources().catch(() => ({ drafts: [], mutations: [] }));
       const items: WorkoutSummary[] = [];
       while (alive) {
         const page = await listWorkouts('completed', 100, undefined, {
@@ -53,6 +52,7 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
         items.push(...page);
         if (page.length < 100) break;
       }
+      const local = await readLocalWorkoutSources();
       if (alive) setState({ from, items: mergeVisibleWorkouts(items, local.drafts, local.mutations, 'completed', { from, to }), status: 'success' });
     })().catch(async () => {
       if (alive) {
@@ -64,6 +64,11 @@ export function WorkoutCalendar({ month: controlledMonth, onMonthChange, onSelec
       alive = false;
     };
   }, [from, to, attempt, today]);
+  useEffect(() => {
+    const refresh = () => setAttempt((value) => value + 1);
+    window.addEventListener('repwise-sync-queue-change', refresh);
+    return () => window.removeEventListener('repwise-sync-queue-change', refresh);
+  }, []);
   const loading = state.from !== from;
   const selectedWorkouts = selectedDay?.from === from && !loading ? workoutsOnDate(state.items, selectedDay.date) : [];
   const counts = new Map<string, number>();

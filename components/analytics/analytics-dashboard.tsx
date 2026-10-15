@@ -635,6 +635,12 @@ export function AnalyticsDashboard() {
     };
   }, [range, retryAttempt]);
 
+  useEffect(() => {
+    const refresh = () => { forceNextRequest.current = true; setRetryAttempt((value) => value + 1); };
+    window.addEventListener('repwise-sync-queue-change', refresh);
+    return () => window.removeEventListener('repwise-sync-queue-change', refresh);
+  }, []);
+
   const selectedRangeLabel = useMemo(
     () => ANALYTICS_RANGE_LABELS[range],
     [range],

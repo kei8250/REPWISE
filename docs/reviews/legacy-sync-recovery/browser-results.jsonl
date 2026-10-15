@@ -1,0 +1,12 @@
+{"check":"legacy_400_queue_recovers_after_reload_with_original_archived","passed":true}
+{"check":"legacy_recovery_settings_no_horizontal_overflow_375","passed":true}
+{"check":"explicit_recovery_keeps_obsolete_updates_and_notes_in_exportable_archive","passed":true}
+{"check":"explicit_recovery_applies_only_delete_and_clears_real_queue_counts","passed":true}
+{"check":"recovered_settings_no_horizontal_overflow_390","passed":true}
+{"check":"deleted_legacy_records_stay_hidden_after_reload_and_navigation","passed":true}
+{"check":"second_tab_opens_pending_workout_history","passed":true}
+{"check":"other_tab_delete_closes_stale_editor_and_preserves_navigation","passed":true}
+{"check":"cross_tab_delete_preserves_pending_update_and_fifo_delete","passed":true}
+{"check":"cross_tab_pending_update_then_delete_syncs_without_resurrection","passed":true}
+{"check":"no_browser_exceptions","passed":true}
+{"browserExceptions":[],"fixtureSyncRequests":6}

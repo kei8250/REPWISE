@@ -12,8 +12,9 @@ export const LOCAL_DRAFT_DATABASE_NAME = 'repwise-local';
 export const LOCAL_DRAFT_STORE_NAME = 'workoutDrafts';
 export const WORKOUT_MUTATION_STORE_NAME = 'workoutMutationQueue';
 export const EXERCISE_MASTER_CACHE_STORE_NAME = 'exerciseMasterCache';
+export const SYNC_RECOVERY_STORE_NAME = 'syncRecoveryArchive';
 export const LOCAL_DRAFT_SCHEMA_VERSION = 1;
-export const LOCAL_DATABASE_VERSION = 3;
+export const LOCAL_DATABASE_VERSION = 4;
 export const COMPLETED_DRAFT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type LocalDraftStatus =
@@ -23,6 +24,7 @@ export type LocalDraftStatus =
   | 'deleted';
 
 export interface LocalWorkoutDraft {
+  deletionConfirmedAt?: string;
   editBaseline?: Workout;
   workoutId: string;
   schemaVersion: typeof LOCAL_DRAFT_SCHEMA_VERSION;
@@ -86,6 +88,9 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
           keyPath: 'key',
         });
       }
+      if (!database.objectStoreNames.contains(SYNC_RECOVERY_STORE_NAME)) {
+        database.createObjectStore(SYNC_RECOVERY_STORE_NAME, { keyPath: 'id' });
+      }
       if (
         event.oldVersion > 0 &&
         event.oldVersion < 3 &&
@@ -102,6 +107,12 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
             if (!cursor) return;
             const value = cursor.value as Partial<WorkoutMutation>;
             const workoutId = String(value.workoutId ?? value.entityId ?? '');
+            request.transaction?.objectStore(SYNC_RECOVERY_STORE_NAME).put({ id: `upgrade:${String(value.mutationId)}`, reason: 'pre-v3-original', mutation: cursor.value });
+            // Never change a request that may already have reached the server.
+            if ((value.retryCount ?? 0) > 0 || value.lastAttemptAt) {
+              cursor.continue();
+              return;
+            }
             const payloadVersion = Number(value.payload?.workout?.version ?? 1);
             const baseVersion =
               value.operation === 'create'
@@ -135,6 +146,7 @@ function openDatabase(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
 function notifyQueueChanged() {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('repwise-sync-queue-change'));
+    try { window.localStorage.setItem('repwise-sync-notification', crypto.randomUUID()); } catch { /* IndexedDB remains the source of truth. */ }
   }
 }
 
@@ -373,9 +385,10 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const currentDraft = isLocalWorkoutDraft(currentDraftValue)
     ? currentDraftValue
     : null;
-  if (workout.status === 'active' && currentDraft &&
+  if (currentDraft &&
       ((operation === 'delete' && currentDraft.draftStatus === 'deleted') ||
-       (operation === 'restore' && currentDraft.draftStatus !== 'deleted'))) {
+       (operation === 'restore' && currentDraft.draftStatus !== 'deleted') ||
+       (currentDraft.draftStatus === 'deleted' && operation !== 'restore' && operation !== 'delete'))) {
     await complete;
     throw new Error('削除状態が変更されています。一覧を更新してください。');
   }
@@ -396,12 +409,14 @@ export async function saveWorkoutDraftAndEnqueueMutation(
             ? lastPredecessor.baseVersion + 1
             : (currentDraft?.serverVersion ?? workout.version),
         );
+  const lastQueued = await requestResult(queue.index('sequence').openCursor(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER - 1), 'prev'));
   const mutation = createMutationRecord(
     workout,
     operation,
     localUpdatedAt,
     baseVersion,
   );
+  mutation.sequence = Math.max(mutation.sequence, Number(lastQueued?.key ?? 0) + 1);
   drafts.put(draft);
   for (const value of superseded) {
     queue.delete(value.mutationId);
@@ -436,6 +451,12 @@ function isWorkoutMutation(value: unknown): value is WorkoutMutation {
   );
 }
 
+function mutationBelongsTo(value: unknown, workoutId: string) {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<WorkoutMutation>;
+  return item.workoutId === workoutId || item.entityId === workoutId || item.payload?.workout?.id === workoutId;
+}
+
 export async function listWorkoutMutations(
   workoutId?: string,
   databaseName = LOCAL_DRAFT_DATABASE_NAME,
@@ -462,14 +483,21 @@ export async function claimNextWorkoutMutation(
 ): Promise<WorkoutMutationClaim> {
   const database = await openDatabase(options.databaseName);
   const transaction = database.transaction(
-    WORKOUT_MUTATION_STORE_NAME,
+    [WORKOUT_MUTATION_STORE_NAME, LOCAL_DRAFT_STORE_NAME],
     'readwrite',
   );
   const complete = transactionComplete(transaction);
   const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
-  const values = await requestResult(
-    store.index('workoutId').getAll(workoutId),
-  );
+  const draft = await requestResult(transaction.objectStore(LOCAL_DRAFT_STORE_NAME).get(workoutId));
+  if (draft && !isLocalWorkoutDraft(draft)) {
+    await complete;
+    throw new Error('旧形式の記録を保護しています。設定から原本を書き出して確認してください。');
+  }
+  const values = (await requestResult(store.getAll())).filter((value) => mutationBelongsTo(value, workoutId));
+  if (values.some((value) => !isWorkoutMutation(value))) {
+    await complete;
+    throw new Error('旧形式の変更を保護しています。設定の復旧管理から原本を書き出してください。');
+  }
   const mutation = values
     .filter(isWorkoutMutation)
     .sort((a, b) => a.sequence - b.sequence)[0];
@@ -478,7 +506,9 @@ export async function claimNextWorkoutMutation(
     await complete;
     return { status: 'empty', mutation: null };
   }
-  if (mutation.syncStatus === 'conflict' || mutation.syncStatus === 'blocked') {
+  if (mutation.syncStatus === 'conflict' || mutation.syncStatus === 'blocked' ||
+      (mutation.syncStatus === 'syncing' && mutation.lastAttemptAt &&
+        Date.parse(options.lastAttemptAt ?? new Date().toISOString()) - Date.parse(mutation.lastAttemptAt) < 60_000)) {
     await complete;
     return { status: 'stopped', mutation };
   }
@@ -523,7 +553,6 @@ export async function resetBlockedWorkoutMutations(
   workoutId: string,
   databaseName = LOCAL_DRAFT_DATABASE_NAME,
 ) {
-  const mutations = await listWorkoutMutations(workoutId, databaseName);
   const database = await openDatabase(databaseName);
   const transaction = database.transaction(
     WORKOUT_MUTATION_STORE_NAME,
@@ -531,6 +560,7 @@ export async function resetBlockedWorkoutMutations(
   );
   const complete = transactionComplete(transaction);
   const store = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const mutations = (await requestResult(store.index('workoutId').getAll(workoutId))).filter(isWorkoutMutation);
   for (const mutation of mutations) {
     if (mutation.syncStatus === 'blocked') {
       store.put({
@@ -557,6 +587,9 @@ export async function acknowledgeWorkoutMutation(
   const complete = transactionComplete(transaction);
   const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
   const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  // An old response in another tab must not overwrite a newer acknowledged delete.
+  const queued = await requestResult(queue.get(mutation.mutationId));
+  if (!queued) { await complete; return; }
   queue.delete(mutation.mutationId);
   const currentRequest = drafts.get(mutation.workoutId);
   const remainingRequest = queue.index('workoutId').getAll(mutation.workoutId);
@@ -586,17 +619,18 @@ export async function acknowledgeWorkoutMutation(
     drafts.put({
       ...current,
       workout: syncedWorkout,
-      draftStatus: hasLaterMutation || hasUnsubmittedEdit
+      draftStatus: hasLaterMutation || hasUnsubmittedEdit || !isLatestSnapshot
         ? current.draftStatus
         : acknowledgedDraftStatus,
       ...(hasUnsubmittedEdit && current.editBaseline && !hasLaterMutation && serverWorkout.status === 'completed'
         ? { editBaseline: { ...current.editBaseline, version: serverWorkout.version, updatedAt: serverWorkout.updatedAt } } : {}),
+      ...(!hasLaterMutation && mutation.operation === 'delete' && serverWorkout.deletedAt ? { deletionConfirmedAt: new Date().toISOString() } : {}),
       completedAt:
         syncedWorkout.status === 'completed'
           ? (syncedWorkout.endedAt ?? current.completedAt)
           : current.completedAt,
       serverUpdatedAt: serverWorkout.updatedAt,
-      serverVersion: serverWorkout.version,
+      serverVersion: Math.max(current.serverVersion ?? 0, serverWorkout.version),
     } satisfies LocalWorkoutDraft);
   }
   await complete;
@@ -612,7 +646,9 @@ export async function readLocalWorkoutSources(databaseName = LOCAL_DRAFT_DATABAS
     requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).getAll()),
   ]);
   await complete;
-  return { drafts: drafts.filter(isLocalWorkoutDraft), mutations: mutations.filter(isWorkoutMutation) };
+  return { drafts: drafts.filter(isLocalWorkoutDraft), mutations: mutations.filter(isWorkoutMutation),
+    unreadableDrafts: drafts.filter((value) => !isLocalWorkoutDraft(value)),
+    unreadableMutations: mutations.filter((value) => !isWorkoutMutation(value)) };
 }
 
 export async function getLocalWorkoutDraft(
@@ -656,14 +692,21 @@ export async function markLocalWorkoutDraftCompleted(
   options: { localUpdatedAt?: string; databaseName?: string } = {},
 ) {
   const database = await openDatabase(options.databaseName);
-  const transaction = database.transaction(LOCAL_DRAFT_STORE_NAME, 'readwrite');
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME], 'readwrite');
   const complete = transactionComplete(transaction);
   const timestamp = options.localUpdatedAt ?? new Date().toISOString();
   const record = createDraftRecord(workout, 'completed', {
     localUpdatedAt: timestamp,
     serverUpdatedAt: workout.updatedAt,
   });
-  transaction.objectStore(LOCAL_DRAFT_STORE_NAME).put(record);
+  const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const current = await requestResult(store.get(workout.id));
+  const pending = await requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).index('workoutId').getAll(workout.id));
+  if (isLocalWorkoutDraft(current) && (current.draftStatus === 'deleted' || current.draftStatus === 'completed_edit' || pending.length || (current.serverVersion ?? 0) > workout.version)) {
+    await complete;
+    return current;
+  }
+  store.put(record);
   await complete;
   return record;
 }
@@ -682,14 +725,15 @@ export async function pruneCompletedWorkoutDrafts(
   const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
   const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
   const values = await requestResult(store.getAll());
+  const queued = await requestResult(queue.getAll());
   let removed = 0;
   for (const value of values) {
-    if (!isLocalWorkoutDraft(value) || value.draftStatus !== 'completed')
+    if (!isLocalWorkoutDraft(value) || value.draftStatus !== 'completed' ||
+        value.workout.status !== 'completed' || value.workout.deletedAt ||
+        !value.serverUpdatedAt || value.serverVersion === null || value.serverVersion < value.workout.version)
       continue;
     const completedAt = Date.parse(value.completedAt ?? value.localUpdatedAt);
-    const pending = await requestResult(
-      queue.index('workoutId').getAll(value.workoutId),
-    );
+    const pending = queued.filter((item) => mutationBelongsTo(item, value.workoutId));
     if (
       !pending.length &&
       Number.isFinite(completedAt) &&
@@ -747,7 +791,7 @@ export function selectWorkoutDetailForDisplay(
 export async function repairCompletedWorkoutDraft(server: Workout, databaseName = LOCAL_DRAFT_DATABASE_NAME) {
   if (server.deletedAt) return;
   const database = await openDatabase(databaseName);
-  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME], 'readwrite');
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readwrite');
   const complete = transactionComplete(transaction);
   const store = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
   const value = await requestResult(store.get(server.id));
@@ -758,8 +802,10 @@ export async function repairCompletedWorkoutDraft(server: Workout, databaseName 
     if (pending.length && queuedCompleted) {
       const repaired = createDraftRecord(queuedCompleted, 'completed', { serverUpdatedAt: value.serverUpdatedAt });
       repaired.serverVersion = value.serverVersion;
+      transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({ id: crypto.randomUUID(), reason: 'completed-cache-repair', draft: value });
       store.put(repaired);
     } else if (!pending.length && server.status === 'completed' && server.version >= (value.serverVersion ?? value.workout.version)) {
+      transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({ id: crypto.randomUUID(), reason: 'completed-cache-repair', draft: value });
       store.put(createDraftRecord(server, 'completed'));
     }
   }
@@ -943,4 +989,105 @@ export async function closeLocalDraftDatabase(
   databases.delete(databaseName);
   if (database)
     await database.then((value) => value.close()).catch(() => undefined);
+}
+
+// Archive before any repair. Originals are intentionally retained without TTL.
+export async function exportWorkoutRecoveryData(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readonly');
+  const complete = transactionComplete(transaction);
+  const [drafts, mutations, recoveryArchive] = await Promise.all([
+    requestResult(transaction.objectStore(LOCAL_DRAFT_STORE_NAME).getAll()),
+    requestResult(transaction.objectStore(WORKOUT_MUTATION_STORE_NAME).getAll()),
+    requestResult(transaction.objectStore(SYNC_RECOVERY_STORE_NAME).getAll()),
+  ]);
+  await complete;
+  return { drafts, mutations, recoveryArchive };
+}
+
+export async function recoverLegacyWorkoutQueue(databaseName = LOCAL_DRAFT_DATABASE_NAME) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readwrite');
+  const complete = transactionComplete(transaction);
+  const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const archive = transaction.objectStore(SYNC_RECOVERY_STORE_NAME);
+  const raw = await requestResult(queue.getAll());
+  const unknown = raw.filter((value) => !isWorkoutMutation(value));
+  const values = raw.filter(isWorkoutMutation).sort((a, b) => a.sequence - b.sequence);
+  let repaired = 0;
+  for (const mutation of values) {
+    if (unknown.some((value) => mutationBelongsTo(value, mutation.workoutId))) continue;
+    // Only this obsolete, precisely identified API validation is automatically retried once.
+    if ((mutation.operation === 'delete' || mutation.operation === 'restore') &&
+        mutation.payload.workout.status === 'active' && (mutation.syncStatus === 'blocked' || mutation.syncStatus === 'failed') &&
+        mutation.lastError?.includes('payload.workout.status: 完了状態が必要です') &&
+        !await requestResult(archive.get(`status-contract:${mutation.mutationId}`))) {
+      archive.put({ id: `status-contract:${mutation.mutationId}`, reason: 'active-status-contract', mutation });
+      queue.put({ ...mutation, syncStatus: 'pending', lastError: null });
+      repaired++;
+    }
+    if (values.some((later) => later.workoutId === mutation.workoutId && later.sequence > mutation.sequence)) continue;
+    const current = await requestResult(drafts.get(mutation.workoutId));
+    if (current && !isLocalWorkoutDraft(current)) continue;
+    // A persisted final delete proves local intent, even if an old ACK rewrote its cache.
+    if (mutation.operation === 'delete' &&
+        (!isLocalWorkoutDraft(current) || (current.localUpdatedAt <= mutation.createdAt && current.draftStatus !== 'completed_edit')) &&
+        (!isLocalWorkoutDraft(current) || current.draftStatus !== 'deleted' || !current.workout.deletedAt)) {
+      archive.put({ id: `tombstone:${mutation.mutationId}`, reason: 'restore-local-delete-intent', draft: current, mutation });
+      const tombstone = { ...mutation.payload.workout, deletedAt: mutation.payload.workout.deletedAt ?? mutation.createdAt };
+      const draft = createDraftRecord(tombstone, 'deleted', { localUpdatedAt: mutation.createdAt });
+      if (isLocalWorkoutDraft(current)) { draft.serverVersion = current.serverVersion; draft.serverUpdatedAt = current.serverUpdatedAt; }
+      drafts.put(draft);
+      repaired++;
+    }
+  }
+  await complete;
+  if (repaired) notifyQueueChanged();
+  return repaired;
+}
+
+// Explicit per-record repair: preserve obsolete requests, then apply only the user's final delete.
+// The server snapshot comes from an owner-scoped read including tombstones. API version checks
+// still guard the new delete if the server changes after this read.
+export async function reconcileDeletedWorkout(
+  workoutId: string,
+  server: Workout | null,
+  expected: { draft: LocalWorkoutDraft; mutations: WorkoutMutation[] },
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readwrite');
+  const complete = transactionComplete(transaction);
+  const drafts = transaction.objectStore(LOCAL_DRAFT_STORE_NAME);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const current = await requestResult(drafts.get(workoutId));
+  const raw = (await requestResult(queue.getAll())).filter((value) => mutationBelongsTo(value, workoutId));
+  const mutations = raw.filter(isWorkoutMutation).sort((a, b) => a.sequence - b.sequence);
+  if (JSON.stringify(current) !== JSON.stringify(expected.draft) || JSON.stringify(mutations) !== JSON.stringify(expected.mutations) ||
+      raw.length !== mutations.length || !isLocalWorkoutDraft(current) || current.draftStatus !== 'deleted' || !current.workout.deletedAt ||
+      (mutations.length > 0 && mutations.at(-1)?.operation !== 'delete') ||
+      mutations.some((item) => item.syncStatus === 'syncing') || (server && server.id !== workoutId) ||
+      !server ||
+      (server?.deletedAt && mutations.some((item) => (item.retryCount > 0 || item.lastAttemptAt) && item.baseVersion >= server.version))) {
+    await complete;
+    throw new Error('削除状態が変更されたか、判断できない変更があります。再読み込みして原本を確認してください。');
+  }
+  transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({
+    id: crypto.randomUUID(), reason: 'explicit-delete-reconciliation', recoveredAt: new Date().toISOString(), draft: current, mutations, server,
+  });
+  for (const item of mutations) queue.delete(item.mutationId);
+  if (server && !server.deletedAt) {
+    const deleted = { ...structuredClone(server), deletedAt: current.workout.deletedAt };
+    const mutation = createMutationRecord(deleted, 'delete', new Date().toISOString(), server.version);
+    const last = await requestResult(queue.index('sequence').openCursor(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER - 1), 'prev'));
+    mutation.sequence = Math.max(mutation.sequence, Number(last?.key ?? 0) + 1);
+    queue.put(mutation);
+    drafts.put({ ...current, localUpdatedAt: mutation.createdAt, serverVersion: server.version });
+  } else {
+    // An existing server tombstone needs no new mutation. Keep local tombstone.
+    drafts.put({ ...current, serverVersion: server.version, serverUpdatedAt: server.updatedAt, deletionConfirmedAt: new Date().toISOString() });
+  }
+  await complete;
+  notifyQueueChanged();
 }

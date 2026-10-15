@@ -72,7 +72,7 @@ export function HomeV2() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [completedAttempt]);
 
   useEffect(() => {
     void pruneCompletedWorkoutDrafts().catch(() => undefined);
@@ -105,6 +105,11 @@ export function HomeV2() {
     };
   }, [analyticsAttempt]);
 
+  useEffect(() => {
+    const refresh = () => { setCompletedAttempt((value) => value + 1); setAnalyticsAttempt((value) => value + 1); };
+    window.addEventListener('repwise-sync-queue-change', refresh);
+    return () => window.removeEventListener('repwise-sync-queue-change', refresh);
+  }, []);
   const recent = completedState.workout;
   return (
     <div className="space-y-5 p-4 sm:p-7 lg:p-10">

@@ -16,7 +16,7 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
-    return Response.json(await getAnalyticsSnapshot(getD1(), value), {
+    return Response.json(await getAnalyticsSnapshot(getD1(), value, new Date(), new URL(request.url).searchParams.getAll('exclude')), {
       headers: { 'Cache-Control': 'private, no-store' },
     });
   } catch (error) {

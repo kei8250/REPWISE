@@ -6,10 +6,12 @@ export function WorkoutSyncList({
   entries,
   busy,
   onRetry,
+  onRecover,
 }: {
   entries: ReturnType<typeof summarizeSyncQueue>;
   busy: string | null;
   onRetry: (id: string) => void;
+  onRecover?: (id: string) => void;
 }) {
   return entries.map(({ id, draft, queue, head, deleted }) => {
     const label = deleted
@@ -38,6 +40,7 @@ export function WorkoutSyncList({
             {head.lastError}
           </p>
         )}
+        {(head.syncStatus === 'blocked' || head.syncStatus === 'conflict') && <p className="mt-2 text-xs text-muted-foreground">自動再送を停止しています。入力不正は記録の内容を確認し、競合は端末の記録を書き出して比較してください。削除は個別復旧でサーバー状態を照合できます。</p>}
         <div className="mt-3 flex flex-wrap gap-3">
           {draft && !deleted && (
             <a
@@ -46,6 +49,9 @@ export function WorkoutSyncList({
             >
               記録を確認
             </a>
+          )}
+          {onRecover && (deleted || head.syncStatus === 'conflict' || head.syncStatus === 'blocked') && (
+            <Button type="button" variant="outline" className="min-h-11" disabled={busy !== null || head.syncStatus === 'syncing'} onClick={() => onRecover(id)}>原本を保護して個別復旧</Button>
           )}
           {head.syncStatus !== 'conflict' && (
             <Button

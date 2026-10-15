@@ -227,7 +227,11 @@ describe('完了記録の編集キャンセル', () => {
     const active = { ...completed, status: 'active' as const, endedAt: null };
     await saveWorkoutDraftAndEnqueueMutation(completed, 'complete');
     const queue = await listWorkoutMutations(completed.id);
-    await markLocalWorkoutDraftCompleted(active);
+    // Persist the actual old corrupt shape; the current cache writer now rejects this overwrite.
+    const current = await getLocalWorkoutDraft(completed.id);
+    const db = await new Promise<IDBDatabase>((resolve) => { const request = indexedDB.open(LOCAL_DRAFT_DATABASE_NAME); request.onsuccess = () => resolve(request.result); });
+    await new Promise<void>((resolve) => { const tx = db.transaction('workoutDrafts', 'readwrite'); tx.objectStore('workoutDrafts').put({ ...current, workout: active }); tx.oncomplete = () => resolve(); });
+    db.close();
     expect(selectWorkoutDetailForDisplay(active, await getLocalWorkoutDraft(completed.id), true).workout).toBeNull();
     await repairCompletedWorkoutDraft(active);
     expect((await getLocalWorkoutDraft(completed.id))?.workout).toMatchObject({ status: 'completed', endedAt: at, overallNote: '編集前のメモ', rating: 5 });

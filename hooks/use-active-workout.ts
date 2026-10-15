@@ -55,8 +55,17 @@ export function useActiveWorkout(id: string) {
   }, []);
 
   const refreshSyncState = useCallback(async () => {
-    const queue = await getWorkoutQueueState(id);
+    const [queue, local] = await Promise.all([getWorkoutQueueState(id), getLocalWorkoutDraft(id)]);
     if (!mountedRef.current) return queue;
+    if (local?.draftStatus === 'deleted' || local?.workout.deletedAt) {
+      clearRetryTimer();
+      workoutRef.current = null;
+      setWorkoutState(null);
+      setSaveState('error');
+      setLocalSaveState('saved');
+      setError('このトレーニングは端末で削除済みです。履歴から削除の同期状態を確認できます。');
+      return queue;
+    }
     const state = queueStateToSaveState(queue);
     setSaveState(state);
     setConflictBaseVersion(queue.conflictBaseVersion);
@@ -70,7 +79,7 @@ export function useActiveWorkout(id: string) {
       setError(null);
     }
     return queue;
-  }, [id]);
+  }, [clearRetryTimer, id]);
 
   const scheduleSync = useCallback(
     (delay = getSyncIdleMs()) => {

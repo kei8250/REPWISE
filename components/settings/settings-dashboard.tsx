@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { listExerciseMasters } from '@/lib/workouts/api-client';
+import { listExerciseMasters, getWorkoutSyncState } from '@/lib/workouts/api-client';
 import { updateCachedExerciseMaster } from '@/lib/workouts/exercise-master-cache';
-import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
+import { readLocalWorkoutSources, exportWorkoutRecoveryData, recoverLegacyWorkoutQueue, reconcileDeletedWorkout, repairCompletedWorkoutDraft } from '@/lib/workouts/local-drafts';
 import { getSyncIdleMs, setSyncIdleMs } from '@/lib/workouts/sync-timing';
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import type {
@@ -133,9 +133,36 @@ export function SettingsDashboard() {
       setBusy(null);
     }
   };
+  const recoverRecord = async (id: string) => {
+    setBusy(id);
+    setNotice(null);
+    try {
+      await recoverLegacyWorkoutQueue();
+      const data = await readLocalWorkoutSources();
+      const draft = data.drafts.find((item) => item.workoutId === id);
+      if (!draft) throw new Error('読めない形式の記録です。端末の記録を書き出して個別の確認が必要です。');
+      const { workout: server } = await getWorkoutSyncState(id);
+      if (draft.draftStatus === 'deleted') {
+        const serverLabel = server ? `サーバー：${server.name}（${server.localDate}・version ${server.version}・${server.deletedAt ? '削除済み' : server.status === 'completed' ? '完了済み' : '入力途中'}）` : 'サーバーに記録がありません。';
+        if (!window.confirm(`${draft.workout.name} を個別復旧します。\n${serverLabel}\n元の端末データは原本として保護します。古い未送信の編集は送らず、サーバーの最新記録に削除を反映します。続けますか？`)) return;
+        await reconcileDeletedWorkout(id, server, { draft, mutations: data.mutations.filter((item) => item.workoutId === id) });
+        const result = await syncPendingWorkoutMutations(id);
+        setNotice(result.failed ? `原本は保護済みです。${result.failed.lastError}` : '削除の復旧が完了しました。原本は書き出しに含まれます。');
+      } else if (draft.draftStatus === 'completed' && draft.workout.status !== 'completed') {
+        await repairCompletedWorkoutDraft(server ?? draft.workout);
+        const repaired = (await readLocalWorkoutSources()).drafts.find((item) => item.workoutId === id);
+        setNotice(repaired?.workout.status === 'completed' ? '完了記録の表示を復旧しました。' : '完了状態を確認できません。原本を書き出して確認してください。');
+      } else {
+        const result = await syncPendingWorkoutMutations(id, { manual: true });
+        setNotice(result.failed ? `記録は保持されています。${result.failed.lastError}` : '再試行しました。');
+      }
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : '復旧できませんでした。原本は保持されています。');
+    } finally { await refreshLocal(); setBusy(null); }
+  };
   const exportLocal = async () => {
     try {
-      const data = await readLocalWorkoutSources();
+      const data = await exportWorkoutRecoveryData();
       const blob = new Blob(
         [
           JSON.stringify(
@@ -163,6 +190,7 @@ export function SettingsDashboard() {
   const queueEntries = summarizeSyncQueue(local?.drafts ?? [], local?.mutations ?? []);
   const visibleEntries = queueEntries.filter((entry) => !entry.deleted);
   const deletedEntries = queueEntries.filter((entry) => entry.deleted);
+  const unconfirmedDeletions = local?.drafts.filter((draft) => draft.draftStatus === 'deleted' && !draft.deletionConfirmedAt && !local.mutations.some((item) => item.workoutId === draft.workoutId)) ?? [];
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-7">
       <section className="rounded-3xl border bg-card p-5">
@@ -206,17 +234,31 @@ export function SettingsDashboard() {
           </p>
         )}
         <div className="mt-4 space-y-3">
-          <WorkoutSyncList entries={visibleEntries} busy={busy} onRetry={(id) => void retrySync(id)} />
+          <WorkoutSyncList entries={visibleEntries} busy={busy} onRetry={(id) => void retrySync(id)} onRecover={(id) => void recoverRecord(id)} />
           {deletedEntries.length > 0 && (
             <details className="rounded-xl border p-3">
               <summary className="min-h-11 cursor-pointer py-3 font-bold">削除の反映待ち（{deletedEntries.length}件）</summary>
               <p className="mb-3 text-sm text-muted-foreground">削除済みの記録は開けません。通信が回復すると、それ以前の未同期の変更に続いて削除を反映します。</p>
               <div className="space-y-3">
-                <WorkoutSyncList entries={deletedEntries} busy={busy} onRetry={(id) => void retrySync(id)} />
+                <WorkoutSyncList entries={deletedEntries} busy={busy} onRetry={(id) => void retrySync(id)} onRecover={(id) => void recoverRecord(id)} />
               </div>
             </details>
           )}
         </div>
+        {unconfirmedDeletions.length > 0 && <div className="mt-4 space-y-3 rounded-xl border p-3">
+          <p className="text-sm font-bold">削除状態が未確認：{unconfirmedDeletions.length}件</p>
+          <p className="text-xs text-muted-foreground">端末では削除済みですが、旧データには同期完了の確認情報がありません。サーバーと照合するまで通常一覧へ戻しません。</p>
+          {unconfirmedDeletions.map((draft) => <div key={draft.workoutId}><p className="break-words text-sm">{draft.workout.name}</p><Button className="mt-2 min-h-11" variant="outline" disabled={busy !== null} onClick={() => void recoverRecord(draft.workoutId)}>サーバーの削除状態を確認</Button></div>)}
+        </div>}
+        {local && (local.unreadableDrafts.length > 0 || local.unreadableMutations.length > 0) && (
+          <p role="alert" className="mt-4 text-sm text-destructive">形式を確認できない記録：{local.unreadableDrafts.length}件・変更：{local.unreadableMutations.length}件。削除せず保護しています。書き出した原本を使った個別確認が必要です。</p>
+        )}
+        {local?.drafts.filter((draft) => draft.draftStatus === 'completed' && draft.workout.status !== 'completed').map((draft) => (
+          <div key={draft.workoutId} className="mt-4 rounded-xl border p-3">
+            <p>{draft.workout.name}：完了状態の表示を確認してください。</p>
+            <Button className="mt-2 min-h-11" disabled={busy !== null} onClick={() => void recoverRecord(draft.workoutId)}>完了状態を復旧</Button>
+          </div>
+        ))}
         <Button
           type="button"
           variant="outline"

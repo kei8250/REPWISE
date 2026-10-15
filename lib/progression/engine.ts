@@ -1,3 +1,4 @@
+import { effectiveReps } from '@/lib/workouts/reps';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 
 export type ProgressionType = 'double_progression';
@@ -22,6 +23,8 @@ export interface ProgressionPerformanceSet {
   setType: string;
   actualLoadGrams: number | null;
   actualReps: number | null;
+  actualRepsLeft?: number | null;
+  actualRepsRight?: number | null;
   deletedAt?: string | null;
 }
 
@@ -181,8 +184,8 @@ export function evaluateProgression(
       (set) =>
         !Number.isInteger(set.actualLoadGrams) ||
         (set.actualLoadGrams ?? 0) <= 0 ||
-        !Number.isInteger(set.actualReps) ||
-        (set.actualReps ?? 0) <= 0,
+        !Number.isInteger(effectiveReps(set)) ||
+        (effectiveReps(set) ?? 0) <= 0,
     )
   )
     return insufficient('invalid_actuals', performance);
@@ -191,7 +194,7 @@ export function evaluateProgression(
   if (loads.size !== 1) return insufficient('inconsistent_load', performance);
 
   const currentLoadGrams = workingSets[0].actualLoadGrams as number;
-  const reps = workingSets.map((set) => set.actualReps as number);
+  const reps = workingSets.map((set) => effectiveReps(set) as number);
   const increase = reps.every((repsValue) => repsValue >= profile.repMax);
   const belowRange = reps.some((repsValue) => repsValue < profile.repMin);
   const nextLoadGrams = increase

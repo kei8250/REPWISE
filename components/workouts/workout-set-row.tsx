@@ -1,26 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ExerciseHistoryEntry } from '@/lib/workouts/history';
 import { validReferenceSet, targetFromReference } from '@/lib/workouts/history';
 import { ArrowDown, ArrowUp, Check, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import {
+  ValidatedNumberInput,
+  reportInvalidWorkoutInput,
+} from './validated-number-input';
+import {
+  editTargetRange,
+  minimumSideReps,
+  type RepMode,
+} from '@/lib/workouts/reps';
 import { Textarea } from '@/components/ui/textarea';
 import type { WorkoutSet } from '@/lib/workouts/types';
 import type { SetComparison } from '@/lib/progression/active-workout';
 import { cn } from '@/lib/utils';
 import { setPerformanceLabel } from '@/lib/workouts/history';
-
-function gramsToKg(value: number | null) {
-  return value === null ? '' : String(value / 1000);
-}
-function kgToGrams(value: string) {
-  return value === '' ? null : Math.round(Number(value) * 1000);
-}
-function optionalInteger(value: string) {
-  return value === '' ? null : Number(value);
-}
 
 export function WorkoutSetRow({
   set,
@@ -36,6 +34,7 @@ export function WorkoutSetRow({
   historyStatus = 'success',
   recentRecord,
   isNext = false,
+  repMode = 'standard',
 }: {
   set: WorkoutSet;
   number: number;
@@ -54,12 +53,32 @@ export function WorkoutSetRow({
   }>;
   recentRecord?: ExerciseHistoryEntry;
   isNext?: boolean;
+  repMode?: RepMode;
   historyStatus?: 'loading' | 'success' | 'error';
 }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [rangeNotice, setRangeNotice] = useState<string | null>(null);
+  const perSide = repMode === 'per_side';
   const [editing, setEditing] = useState(false);
   const completed = set.status === 'completed';
-  const patch = (values: Partial<WorkoutSet>) =>
-    onChange({ ...set, ...values, updatedAt: new Date().toISOString() });
+  const patch = (values: Partial<WorkoutSet>) => {
+    const next = { ...set, ...values, updatedAt: new Date().toISOString() };
+    if (
+      ('actualLoadGrams' in values ||
+        'actualReps' in values ||
+        'actualRepsLeft' in values ||
+        'actualRepsRight' in values) &&
+      next.status === 'completed' &&
+      (next.actualLoadGrams === null ||
+        next.actualReps === null ||
+        (perSide &&
+          (next.actualRepsLeft == null || next.actualRepsRight == null)))
+    ) {
+      next.status = 'planned';
+      next.completedAt = null;
+    }
+    onChange(next);
+  };
   const canComplete =
     set.actualLoadGrams !== null &&
     Number.isInteger(set.actualLoadGrams) &&
@@ -68,7 +87,12 @@ export function WorkoutSetRow({
     set.actualReps !== null &&
     Number.isInteger(set.actualReps) &&
     set.actualReps > 0 &&
-    set.actualReps <= 999;
+    set.actualReps <= 999 &&
+    (!perSide ||
+      [set.actualRepsLeft, set.actualRepsRight].every(
+        (value) =>
+          Number.isInteger(value) && (value ?? 0) >= 1 && (value ?? 0) <= 999,
+      ));
   const fieldId = (field: string) => `${set.id}-${field}`;
   if (completed && !editing)
     return (
@@ -105,6 +129,7 @@ export function WorkoutSetRow({
     );
   return (
     <div
+      ref={root}
       id={`workout-set-${set.id}`}
       className={cn(
         'min-w-0 scroll-mt-[calc(var(--recording-header-height,144px)+16px)] rounded-2xl border bg-card p-3 transition [&_input]:scroll-mt-[calc(var(--recording-header-height,144px)+24px)] [&_textarea]:scroll-mt-[calc(var(--recording-header-height,144px)+24px)]',
@@ -240,78 +265,142 @@ export function WorkoutSetRow({
         <div className="mt-2 grid grid-cols-3 gap-2">
           {(['targetLoadGrams', 'targetRepMin', 'targetRepMax'] as const).map(
             (field, index) => (
-              <label key={field} className="min-w-0 text-xs">
-                {['目標kg', 'rep下限', 'rep上限'][index]}
-                <Input
+              <div key={field} className="min-w-0 text-xs">
+                <label htmlFor={fieldId(field)}>
+                  {['目標kg', 'rep下限', 'rep上限'][index]}
+                </label>
+                <ValidatedNumberInput
+                  id={fieldId(field)}
                   aria-label={`セット${number}の${['目標重量', '目標rep下限', '目標rep上限'][index]}`}
-                  type="number"
-                  inputMode={index === 0 ? 'decimal' : 'numeric'}
-                  min="0"
-                  step={index === 0 ? '0.001' : '1'}
+                  min={0}
+                  max={index === 0 ? 2000 : 999}
+                  scale={index === 0 ? 1000 : 1}
                   className="mt-1 h-11 min-w-0 text-base"
-                  value={
-                    index === 0 ? gramsToKg(set[field]) : (set[field] ?? '')
-                  }
-                  onChange={(event) =>
-                    patch({
-                      [field]:
-                        index === 0
-                          ? kgToGrams(event.target.value)
-                          : optionalInteger(event.target.value),
-                    })
-                  }
+                  value={set[field]}
+                  onValueChange={(value) => {
+                    if (field === 'targetLoadGrams') {
+                      patch({ targetLoadGrams: value });
+                      return;
+                    }
+                    const next = editTargetRange(set, field, value);
+                    setRangeNotice(
+                      next.targetRepMin !== set.targetRepMin &&
+                        field === 'targetRepMax'
+                        ? '下限を上限に合わせて調整しました'
+                        : next.targetRepMax !== set.targetRepMax &&
+                            field === 'targetRepMin'
+                          ? '上限を下限に合わせて調整しました'
+                          : null,
+                    );
+                    patch(next);
+                  }}
                 />
-              </label>
+              </div>
             ),
           )}
         </div>
       </div>
+      {rangeNotice && (
+        <p className="mb-2 text-xs text-muted-foreground" aria-live="polite">
+          {rangeNotice}
+        </p>
+      )}
+      {set.targetRepMin !== null &&
+        set.targetRepMax !== null &&
+        set.targetRepMin > set.targetRepMax && (
+          <div className="mb-2 rounded-xl border border-amber-300 p-2 text-xs">
+            <p>
+              保存済みの目標が下限＞上限です。同期は止めずに保持しています。
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-1 min-h-11"
+              onClick={() =>
+                patch({
+                  targetRepMin: set.targetRepMax,
+                  targetRepMax: set.targetRepMin,
+                })
+              }
+            >
+              下限と上限を入れ替える
+            </Button>
+          </div>
+        )}
       <p className="mb-1 text-xs font-bold">セット後の実績</p>
+      {perSide && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          重量は共通、目標回数は左右それぞれ。進行判定は少ない側の回数を使います。
+        </p>
+      )}
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2">
-        <div>
+        <div className={perSide ? 'col-span-3' : ''}>
           <label
             htmlFor={fieldId('actual-load')}
             className="text-xs font-semibold text-muted-foreground"
           >
-            重量（kg）
+            重量（kg）{perSide ? ' · 左右共通' : ''}
           </label>
-          <Input
+          <ValidatedNumberInput
             id={fieldId('actual-load')}
             aria-label={`セット${number}の実績重量`}
-            inputMode="decimal"
-            type="number"
-            min="0"
-            max="2000"
-            step="0.001"
-            value={gramsToKg(set.actualLoadGrams)}
-            onChange={(event) =>
-              patch({ actualLoadGrams: kgToGrams(event.target.value) })
+            required={
+              set.actualReps !== null ||
+              set.actualRepsLeft != null ||
+              set.actualRepsRight != null
             }
+            min={0}
+            max={2000}
+            scale={1000}
+            value={set.actualLoadGrams}
+            onValueChange={(value) => patch({ actualLoadGrams: value })}
             className="mt-1 h-11 min-w-0 text-lg font-black"
           />
         </div>
-        <div>
-          <label
-            htmlFor={fieldId('actual-reps')}
-            className="text-xs font-semibold text-muted-foreground"
-          >
-            rep
-          </label>
-          <Input
-            id={fieldId('actual-reps')}
-            aria-label={`セット${number}の実績rep`}
-            inputMode="numeric"
-            type="number"
-            min="1"
-            step="1"
-            max="999"
-            value={set.actualReps ?? ''}
-            onChange={(event) =>
-              patch({ actualReps: optionalInteger(event.target.value) })
-            }
-            className="mt-1 h-11 min-w-0 text-lg font-black"
-          />
-        </div>
+        {(perSide
+          ? (['actualRepsRight', 'actualRepsLeft'] as const)
+          : (['actualReps'] as const)
+        ).map((field) => (
+          <div key={field}>
+            <label
+              htmlFor={fieldId(field)}
+              className="text-xs font-semibold text-muted-foreground"
+            >
+              {field === 'actualRepsRight'
+                ? '右の回数'
+                : field === 'actualRepsLeft'
+                  ? '左の回数'
+                  : 'rep'}
+            </label>
+            <ValidatedNumberInput
+              id={fieldId(field)}
+              aria-label={`セット${number}の${field === 'actualRepsRight' ? '右回数' : field === 'actualRepsLeft' ? '左回数' : '実績rep'}`}
+              required={
+                set.actualLoadGrams !== null ||
+                set.actualRepsLeft != null ||
+                set.actualRepsRight != null
+              }
+              min={1}
+              max={999}
+              value={set[field] ?? null}
+              onValueChange={(value) => {
+                const next = { ...set, [field]: value };
+                patch(
+                  perSide
+                    ? {
+                        ...next,
+                        actualReps: minimumSideReps(
+                          next.actualRepsLeft,
+                          next.actualRepsRight,
+                        ),
+                      }
+                    : { actualReps: value },
+                );
+              }}
+              className="mt-1 h-11 min-w-0 text-lg font-black"
+            />
+          </div>
+        ))}
         <Button
           type="button"
           size="icon"
@@ -325,7 +414,9 @@ export function WorkoutSetRow({
               ? `セット${number}を未完了に戻す`
               : `セット${number}を完了`
           }
-          onClick={() =>
+          onClick={() => {
+            if (reportInvalidWorkoutInput(root.current)) return;
+            setEditing(false);
             patch(
               completed
                 ? { status: 'planned', completedAt: null }
@@ -333,8 +424,8 @@ export function WorkoutSetRow({
                     status: 'completed',
                     completedAt: new Date().toISOString(),
                   },
-            )
-          }
+            );
+          }}
         >
           {completed ? <RotateCcw /> : <Check />}
         </Button>

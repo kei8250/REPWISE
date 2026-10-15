@@ -121,7 +121,7 @@ export function useActiveWorkout(id: string) {
   const setWorkout = useCallback(
     (updater: Workout | ((current: Workout) => Workout)) => {
       const current = workoutRef.current;
-      if (!current || current.status !== 'active') return;
+      if (!current || current.status !== 'active' || current.deletedAt) return;
       const nextValue =
         typeof updater === 'function' ? updater(current) : updater;
       clearRetryTimer();

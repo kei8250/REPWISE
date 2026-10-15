@@ -1,5 +1,9 @@
 'use client';
 
+import { reportInvalidWorkoutInput } from './validated-number-input';
+import { prepareWorkoutCompletion } from '@/lib/workouts/completion';
+import { validateWorkoutSnapshot } from '@/lib/workouts/validation';
+import { repsLabel } from '@/lib/workouts/reps';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -186,12 +190,14 @@ export function WorkoutDetail({ id }: { id: string }) {
   }
 
   async function saveEdit() {
-    if (!workout) return;
+    if (!workout || reportInvalidWorkoutInput()) return;
+    let checked: Workout;
+    try { checked = { ...prepareWorkoutCompletion(workout), endedAt: workout.endedAt }; validateWorkoutSnapshot(checked); } catch (cause) { setError(cause instanceof Error ? cause.message : '入力内容を確認してください'); return; }
     setSavingLocally(true);
     setSyncState('syncing');
     try {
       await saveWorkoutDraftAndEnqueueMutation(
-        { ...workout, status: 'completed', deletedAt: null },
+        { ...checked, status: 'completed', deletedAt: null },
         'edit',
       );
       const result = await syncPendingWorkoutMutations(id);
@@ -529,7 +535,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                               {set.actualLoadGrams === null
                                 ? '—'
                                 : `${set.actualLoadGrams / 1000} kg`}{' '}
-                              × {set.actualReps ?? '—'} reps
+                              × {repsLabel(set)}
                             </p>
                           </div>
                           {(set.targetLoadGrams !== null ||

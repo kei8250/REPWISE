@@ -41,7 +41,7 @@ export function ExerciseSettingsReference({
       {master ? (
         <dl className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <dt className="text-muted-foreground">回数範囲</dt>
+            <dt className="text-muted-foreground">回数範囲{master.repMode === 'per_side' ? '（左右それぞれ）' : ''}</dt>
             <dd>
               {master.defaultRepMin ?? '—'}〜{master.defaultRepMax ?? '—'}回
             </dd>

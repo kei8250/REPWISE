@@ -22,6 +22,8 @@ interface SetRow {
   target_rep_max: number | null;
   actual_load_grams: number | null;
   actual_reps: number | null;
+  actual_reps_left: number | null;
+  actual_reps_right: number | null;
   memo: string;
   completed_at: string | null;
   created_at: string;
@@ -132,6 +134,7 @@ export async function getExerciseHistory(
         targetRepMax: set.target_rep_max,
         actualLoadGrams: set.actual_load_grams,
         actualReps: set.actual_reps,
+        ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
         memo: set.memo,
         completedAt: set.completed_at,
         createdAt: set.created_at,

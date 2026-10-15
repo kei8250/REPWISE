@@ -44,6 +44,8 @@ type PerformanceSetRow = {
   set_type: string;
   actual_load_grams: number | null;
   actual_reps: number | null;
+  actual_reps_left: number | null;
+  actual_reps_right: number | null;
   deleted_at: string | null;
 };
 
@@ -182,7 +184,7 @@ export async function getLatestCompletedExercisePerformance(
   const result = await db
     .prepare(
       `SELECT id, position, status, set_type, actual_load_grams,
-              actual_reps, deleted_at
+              actual_reps, actual_reps_left, actual_reps_right, deleted_at
        FROM workout_set
        WHERE workout_exercise_id = ? AND deleted_at IS NULL
        ORDER BY position, created_at`,
@@ -197,6 +199,7 @@ export async function getLatestCompletedExercisePerformance(
     actualLoadGrams:
       set.actual_load_grams === null ? null : Number(set.actual_load_grams),
     actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
     deletedAt: set.deleted_at,
   }));
   return {
@@ -269,7 +272,7 @@ export async function getWorkoutCompletionProgressionSummary(
     db
       .prepare(
         `SELECT ws.id, ws.workout_exercise_id, ws.position, ws.status,
-                ws.set_type, ws.actual_load_grams, ws.actual_reps,
+                ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
                 ws.deleted_at
          FROM workout_set ws
          JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -292,6 +295,7 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         set.actual_load_grams === null ? null : Number(set.actual_load_grams),
       actualReps: set.actual_reps === null ? null : Number(set.actual_reps),
+      ...(set.actual_reps_left !== null || set.actual_reps_right !== null ? { actualRepsLeft: set.actual_reps_left, actualRepsRight: set.actual_reps_right } : {}),
       deletedAt: set.deleted_at,
     });
     setsByExercise.set(set.workout_exercise_id, sets);
@@ -312,7 +316,7 @@ export async function getWorkoutCompletionProgressionSummary(
                 w.updated_at AS workout_updated_at,
                 we.id AS workout_exercise_id, we.exercise_id,
                 ws.id, ws.position,
-                ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps,
+                ws.status, ws.set_type, ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
                 ws.deleted_at
          FROM workout_set ws
          JOIN workout_exercise we ON we.id = ws.workout_exercise_id
@@ -437,6 +441,7 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         row.actual_load_grams === null ? null : Number(row.actual_load_grams),
       actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.deleted_at,
     });
     historyByExercise.set(row.exercise_id, performances);
@@ -475,6 +480,7 @@ export async function getWorkoutCompletionProgressionSummary(
       actualLoadGrams:
         row.actual_load_grams === null ? null : Number(row.actual_load_grams),
       actualReps: row.actual_reps === null ? null : Number(row.actual_reps),
+      ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.deleted_at,
     });
     stagnationHistoryByExercise.set(row.exercise_id, stagnationHistory);

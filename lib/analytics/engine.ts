@@ -1,3 +1,4 @@
+import { totalReps } from '@/lib/workouts/reps';
 import {
   evaluateProgression,
   type ProgressionExercisePerformance,
@@ -273,7 +274,7 @@ function buildWorkoutAnalytics(
       workingSetCount: sets.length,
       volumeGramReps: sets.reduce(
         (total, set) =>
-          total + (set.actualLoadGrams as number) * (set.actualReps as number),
+          total + (set.actualLoadGrams as number) * totalReps(set),
         0,
       ),
     };
@@ -385,7 +386,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         value: validSets(item.performance).reduce(
           (total, set) =>
             total +
-            (set.actualLoadGrams as number) * (set.actualReps as number),
+            (set.actualLoadGrams as number) * totalReps(set),
           0,
         ),
       }));
@@ -451,7 +452,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         totalVolumeGramReps: sets.reduce(
           (total, set) =>
             total +
-            (set.actualLoadGrams as number) * (set.actualReps as number),
+            (set.actualLoadGrams as number) * totalReps(set),
           0,
         ),
         profile: latest.profile,
@@ -507,7 +508,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
     aggregate.workingSetCount += sets.length;
     aggregate.totalVolumeGramReps += sets.reduce(
       (total, set) =>
-        total + (set.actualLoadGrams as number) * (set.actualReps as number),
+        total + (set.actualLoadGrams as number) * totalReps(set),
       0,
     );
     bodyPartMap.set(bodyPart, aggregate);

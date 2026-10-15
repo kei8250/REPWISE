@@ -1,3 +1,4 @@
+import { totalReps } from '@/lib/workouts/reps';
 import type {
   ExerciseMaster,
   Workout,
@@ -306,7 +307,9 @@ export async function saveWorkoutDraftAndEnqueueMutation(
       ? 'deleted'
       : operation === 'edit'
         ? 'completed_edit'
-        : operation === 'complete' || operation === 'restore'
+        : operation === 'restore'
+          ? (workout.status === 'active' ? 'active' : 'completed')
+          : operation === 'complete'
           ? 'completed'
           : 'active',
     { ...options, localUpdatedAt },
@@ -337,6 +340,12 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const currentDraft = isLocalWorkoutDraft(currentDraftValue)
     ? currentDraftValue
     : null;
+  if (workout.status === 'active' && currentDraft &&
+      ((operation === 'delete' && currentDraft.draftStatus === 'deleted') ||
+       (operation === 'restore' && currentDraft.draftStatus !== 'deleted'))) {
+    await complete;
+    throw new Error('削除状態が変更されています。一覧を更新してください。');
+  }
   if (operation === 'replace' && currentDraft && currentDraft.draftStatus !== 'active') {
     await complete;
     throw new Error('このトレーニングは終了済みです。履歴から確認・編集してください。');
@@ -534,8 +543,9 @@ export async function acknowledgeWorkoutMutation(
     const acknowledgedDraftStatus: LocalDraftStatus =
       mutation.operation === 'delete'
         ? 'deleted'
+        : mutation.operation === 'restore'
+          ? (serverWorkout.status === 'active' ? 'active' : 'completed')
         : mutation.operation === 'edit' ||
-            mutation.operation === 'restore' ||
             mutation.operation === 'complete'
           ? 'completed'
           : 'active';
@@ -814,6 +824,7 @@ export function selectWorkoutForRestore(
   localDraft: LocalWorkoutDraft | null,
   hasPendingMutations = false,
 ): WorkoutRestoreResult {
+  if (localDraft?.draftStatus === 'deleted' || localDraft?.workout.deletedAt) return { workout: null, source: 'none' };
   if (serverWorkout && serverWorkout.status !== 'active') {
     return { workout: serverWorkout, source: 'server' };
   }
@@ -858,7 +869,7 @@ export function workoutToSummary(workout: Workout): WorkoutSummary {
     completedSetCount: completedSets.length,
     totalVolumeGrams: completedSets.reduce(
       (total, set) =>
-        total + (set.actualLoadGrams ?? 0) * (set.actualReps ?? 0),
+        total + (set.actualLoadGrams ?? 0) * totalReps(set),
       0,
     ),
   };

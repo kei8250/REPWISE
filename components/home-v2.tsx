@@ -144,6 +144,7 @@ export function HomeV2() {
           </a>
         </div>
       </section>
+      <a href={APP_ROUTES.activeHistory} className="flex min-h-11 items-center justify-between rounded-xl border bg-card px-4 text-sm font-bold text-primary">入力途中の記録を一覧で整理 <ArrowRight className="size-4" /></a>
       <WorkoutCalendar />
       <div className="grid gap-4 sm:grid-cols-2">
         <Card className="rounded-3xl py-5 shadow-none">

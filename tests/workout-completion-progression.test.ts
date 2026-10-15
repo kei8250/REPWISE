@@ -181,6 +181,7 @@ beforeEach(() => {
     '0003_jazzy_karnak.sql',
     '0004_grey_kinsey_walden.sql',
     '0005_neat_molly_hayes.sql',
+    '0006_side_repetitions.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),

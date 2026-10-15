@@ -42,6 +42,8 @@ type PerformanceRow = {
   set_type: string;
   actual_load_grams: number | null;
   actual_reps: number | null;
+  actual_reps_left: number | null;
+  actual_reps_right: number | null;
   set_deleted_at: string | null;
 };
 
@@ -128,6 +130,7 @@ function groupExerciseHistory(rows: PerformanceRow[]) {
       setType: row.set_type,
       actualLoadGrams: numberOrNull(row.actual_load_grams),
       actualReps: numberOrNull(row.actual_reps),
+      ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
       deletedAt: row.set_deleted_at,
     };
     item.performance.sets.push(set);
@@ -168,7 +171,7 @@ export async function getAnalyticsInput(
                   em.default_rest_seconds,
                   ws.id AS set_id, ws.position AS set_position,
                   ws.status AS set_status, ws.set_type,
-                  ws.actual_load_grams, ws.actual_reps,
+                  ws.actual_load_grams, ws.actual_reps, ws.actual_reps_left, ws.actual_reps_right,
                   ws.deleted_at AS set_deleted_at
            FROM workout_set ws
            JOIN workout_exercise we ON we.id = ws.workout_exercise_id

@@ -210,6 +210,7 @@ beforeEach(() => {
     '0003_jazzy_karnak.sql',
     '0004_grey_kinsey_walden.sql',
     '0005_neat_molly_hayes.sql',
+    '0006_side_repetitions.sql',
   ]) {
     sqlite.exec(
       readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'),
@@ -733,4 +734,85 @@ describe('Phase 1B-2b copied workout persistence', () => {
         .get(copied.id),
     ).toMatchObject({ count: 0 });
   });
+});
+
+describe('active draft deletion and per-side persistence', () => {
+  it('activeを完了扱いにせず削除・再送・復元でき、終了時刻と子の記録を維持する', async () => {
+    const created = await applyWorkoutMutation(d1, mutation('draft-create', 'create', workout()));
+    const request = mutation('draft-delete', 'delete', { ...created.workout, deletedAt: timestamp });
+    const deleted = await applyWorkoutMutation(d1, request);
+    expect(deleted.workout).toMatchObject({ status: 'active', endedAt: null, version: 2, deletedAt: expect.any(String) });
+    expect(await getWorkout(d1, workout().id)).toBeNull();
+    expect(await listWorkouts(d1, 'active')).toEqual([]);
+    expect((await applyWorkoutMutation(d1, request)).duplicate).toBe(true);
+    const restored = await applyWorkoutMutation(d1, mutation('draft-restore', 'restore', { ...deleted.workout, deletedAt: null }));
+    expect(restored.workout).toMatchObject({ status: 'active', endedAt: null, version: 3, deletedAt: null });
+    expect(restored.workout.exercises[0].sets).toHaveLength(2);
+    expect((await listWorkouts(d1, 'active'))[0].id).toBe(workout().id);
+    await expect(applyWorkoutMutation(d1, mutation('stale-delete', 'delete', created.workout))).rejects.toThrow();
+  });
+
+  it('左右別の種目作成とsnapshot保存・再読込・履歴・volume・コピーを通す', async () => {
+    const { createExerciseMaster } = await import('@/lib/workouts/server-store');
+    const { validateWorkoutSnapshot } = await import('@/lib/workouts/validation');
+    const { getExerciseHistory } = await import('@/lib/workouts/history-server-store');
+    const { getWorkoutCompletionProgressionSummary } = await import('@/lib/progression/server-store');
+    const master = await createExerciseMaster(d1, { id: 'side-master', name: 'ブルガリアンテスト', bodyPart: '脚', repMode: 'per_side' });
+    expect(master.repMode).toBe('per_side');
+    const snapshot = workout();
+    snapshot.exercises[0].repMode = 'per_side';
+    snapshot.exercises[0].exerciseId = master.id;
+    snapshot.exercises[0].sets = [0,1,2].map(position => ({ ...set(`side-${position}`, position), actualReps: 99, actualRepsRight: 12, actualRepsLeft: 9 }));
+    const canonical = validateWorkoutSnapshot(snapshot);
+    expect(canonical.exercises[0].sets[0].actualReps).toBe(9);
+    const created = await applyWorkoutMutation(d1, mutation('side-create', 'create', canonical));
+    const completed = await applyWorkoutMutation(d1, mutation('side-complete', 'complete', { ...created.workout, status: 'completed', endedAt: timestamp, exercises: created.workout.exercises.map(exercise => ({ ...exercise, status: 'completed' })) }));
+    expect((await getWorkout(d1, snapshot.id))?.exercises[0]).toMatchObject({ repMode: 'per_side', sets: [expect.objectContaining({ actualReps: 9, actualRepsLeft: 9, actualRepsRight: 12 }), expect.anything(), expect.anything()] });
+    const history = await getExerciseHistory(d1, master.id);
+    expect(history.references?.[0].sets[0]).toMatchObject({ actualRepsLeft: 9, actualRepsRight: 12 });
+    const summary = await getWorkoutCompletionProgressionSummary(d1, snapshot.id);
+    expect(summary.exercises[0].decision.status).toBe('keep_load');
+    expect(summary.exercises[0].personalRecords.current.totalVolumeGramReps).toBe(60000 * (12 + 9) * 3);
+    expect((await listWorkouts(d1, 'completed'))[0].totalVolumeGrams).toBe(60000 * (12 + 9) * 3);
+    const { getAnalyticsSnapshot } = await import('@/lib/analytics/server-store');
+    const analytics = await getAnalyticsSnapshot(d1, 'all', new Date('2026-10-15T00:00:00Z'));
+    expect(analytics.workouts.totalVolumeGramReps).toBe(60000 * (12 + 9) * 3);
+    const { updateExerciseMaster } = await import('@/lib/workouts/exercise-settings-store');
+    await updateExerciseMaster(d1, master.id, { ...master, repMode: 'standard' });
+    expect((await getWorkout(d1, snapshot.id))?.exercises[0].repMode).toBe('per_side');
+
+    const copied = copyWorkoutForToday(completed.workout);
+    expect(copied.exercises[0].repMode).toBe('per_side');
+    expect(copied.exercises[0].sets.every(set => set.actualReps === null && set.actualRepsLeft === null && set.actualRepsRight === null)).toBe(true);
+  });
+
+  it('旧キューの逆転した目標は実績を変更せず同期でき、同一mutationの再送も変えない', async () => {
+    const { validateWorkoutSnapshot } = await import('@/lib/workouts/validation');
+    const original = workout();
+    original.exercises[0].sets[0].targetRepMin = 12;
+    original.exercises[0].sets[0].targetRepMax = 8;
+    const normalized = validateWorkoutSnapshot(original);
+    expect(normalized.exercises[0].sets[0]).toMatchObject({ targetRepMin: 12, targetRepMax: 8, actualReps: 9 });
+    const request = mutation('legacy-reversed', 'create', normalized);
+    const created = await applyWorkoutMutation(d1, request);
+    expect(created.workout.exercises[0].sets[0].actualReps).toBe(9);
+    expect((await applyWorkoutMutation(d1, request)).duplicate).toBe(true);
+  });
+});
+
+
+it('個別セットAPIと置換APIも左右回数とsnapshotの方式を保持する', async () => {
+  const { addWorkoutSet, updateWorkoutSet, replaceWorkout } = await import('@/lib/workouts/server-store');
+  const snapshot = workout();
+  snapshot.exercises[0].repMode = 'per_side';
+  snapshot.exercises[0].sets = [];
+  await applyWorkoutMutation(d1, mutation('side-legacy-create', 'create', snapshot));
+  const actual = { ...set('individual-side',0), actualReps: 11, actualRepsRight: 12, actualRepsLeft: 8 };
+  const added = (await addWorkoutSet(d1, snapshot.id, snapshot.exercises[0].id, actual))!;
+  expect(added.exercises[0].sets[0]).toMatchObject({ actualReps: 8, actualRepsLeft: 8, actualRepsRight: 12 });
+  const updated = (await updateWorkoutSet(d1, snapshot.id, snapshot.exercises[0].id, actual.id, { ...actual, actualRepsLeft: 10 }))!;
+  expect(updated.exercises[0].sets[0]).toMatchObject({ actualReps: 10, actualRepsLeft: 10, actualRepsRight: 12 });
+  const replacement = await replaceWorkout(d1, updated);
+  expect(replacement.exercises[0].repMode).toBe('per_side');
+  expect(replacement.exercises[0].sets[0]).toMatchObject({ actualRepsLeft: 10, actualRepsRight: 12 });
 });

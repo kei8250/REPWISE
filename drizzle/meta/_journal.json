@@ -43,6 +43,13 @@
       "when": 1789094854502,
       "tag": "0005_neat_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792023061595,
+      "tag": "0006_side_repetitions",
+      "breakpoints": true
     }
   ]
 }

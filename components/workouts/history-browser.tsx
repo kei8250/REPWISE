@@ -96,7 +96,7 @@ export function HistoryBrowser({
             variant={status === 'active' ? 'default' : 'outline'}
             aria-pressed={status === 'active'}
             className="flex-1"
-            onClick={() => update({ month, date, status: 'active', all })}
+            onClick={() => update({ month, status: 'active', all: true })}
           >
             入力途中
           </Button>

@@ -30,7 +30,7 @@ export default async function HistoryPage({
         initialBodyPart={query.bodyPart?.slice(0, 40)}
         initialDate={date}
         initialMonth={month}
-        initialAll={query.month === 'all' && !date}
+        initialAll={(query.month === 'all' || (query.status === 'active' && !query.month)) && !date}
         initialStatus={query.status === 'active' ? 'active' : 'completed'}
       />
     </AppShell>

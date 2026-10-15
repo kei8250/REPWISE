@@ -1,3 +1,4 @@
+import { minimumSideReps } from './reps';
 import type { Workout } from './types';
 
 export function prepareWorkoutCompletion(
@@ -7,12 +8,14 @@ export function prepareWorkoutCompletion(
   if (!current.exercises.length)
     throw new Error('種目を1つ以上追加してください');
   const exercises = current.exercises.map((exercise) => {
-    const sets = exercise.sets.map((set) => {
+    const sets = exercise.sets.map((original) => {
+      const set = exercise.repMode === 'per_side' ? { ...original, actualReps: minimumSideReps(original.actualRepsLeft, original.actualRepsRight) } : original;
       if (set.status === 'skipped' || exercise.status === 'skipped')
         return { ...set, status: 'skipped' as const };
       if (
         set.actualLoadGrams === null &&
         set.actualReps === null &&
+        set.actualRepsLeft == null && set.actualRepsRight == null &&
         set.status !== 'completed'
       ) {
         return {
@@ -22,6 +25,7 @@ export function prepareWorkoutCompletion(
           updatedAt: endedAt,
         };
       }
+      if (exercise.repMode === 'per_side' && [set.actualRepsLeft, set.actualRepsRight].some(value => !Number.isSafeInteger(value) || (value ?? 0) < 1 || (value ?? 0) > 999)) throw new Error(`${exercise.exerciseNameSnapshot}のセット${set.position + 1}：右と左の回数を1〜999の整数で入力してください。`);
       if (
         !Number.isSafeInteger(set.actualLoadGrams) ||
         (set.actualLoadGrams ?? -1) < 0 ||

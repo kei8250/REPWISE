@@ -20,6 +20,7 @@ export function mergeVisibleWorkouts(
   const pending = new Set(mutations.map((item) => item.workoutId));
   const items = new Map(server.map((item) => [item.id, item]));
   for (const draft of drafts) {
+    if (draft.draftStatus === 'deleted' || draft.workout.deletedAt) { items.delete(draft.workoutId); continue; }
     if (draft.workout.status === 'completed' && items.get(draft.workoutId)?.status === 'active') {
       items.delete(draft.workoutId);
     }
@@ -31,7 +32,6 @@ export function mergeVisibleWorkouts(
     items.delete(workout.id);
     if (
       workout.deletedAt ||
-      draft.draftStatus === 'deleted' ||
       (status && workout.status !== status) ||
       (filter.from && workout.localDate < filter.from) ||
       (filter.to && workout.localDate > filter.to) ||
@@ -103,4 +103,23 @@ export async function loadVisibleWorkouts(
     if (!items.length) throw error;
     return { items, serverCount: 0, hasMore: false, serverAvailable: false };
   }
+}
+
+
+// Fill a visible page even if several raw server rows are hidden by local tombstones.
+export async function loadVisibleWorkoutPage(status?: Workout['status'], limit = 8, filter: WorkoutHistoryFilter = {}) {
+  let items: WorkoutSummary[] = [];
+  let serverCount = 0;
+  let hasMore = true;
+  let serverAvailable = true;
+  while (items.length < limit && hasMore) {
+    const page = await loadVisibleWorkouts(status, Math.min(limit, 30), { ...filter, offset: (filter.offset ?? 0) + serverCount });
+    items = [...new Map([...items, ...page.items].map(item => [item.id, item])).values()];
+    serverCount += page.serverCount;
+    hasMore = page.hasMore;
+    serverAvailable = page.serverAvailable;
+    if (page.serverCount === 0) break;
+  }
+  items.sort((a, b) => b.localDate.localeCompare(a.localDate) || b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
+  return { items, serverCount, hasMore, serverAvailable };
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { reportInvalidWorkoutInput } from './validated-number-input';
 import { useWorkoutView } from '@/hooks/use-workout-view';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -140,6 +141,7 @@ export function ActiveWorkout({ id }: { id: string }) {
     setSelectedId(created.id);
   };
   const finish = async () => {
+    if (reportInvalidWorkoutInput(recordingRoot.current)) return;
     if (
       !window.confirm(
         '入力済みのセットを確定してトレーニングを終了しますか？未入力のセットはスキップになります。終了後も履歴から編集できます。',

@@ -1,3 +1,4 @@
+import { hasSideReps, repsLabel } from '@/lib/workouts/reps';
 import type {
   ProgressionDecision,
   ProgressionExercisePerformance,
@@ -83,6 +84,7 @@ export function formatWorkingSetPerformance(
     `SET ${set.position + 1}: ${set.actualLoadGrams === null ? '—' : formatProgressionWeight(set.actualLoadGrams)}×${set.actualReps ?? '—'}${set.status !== 'completed' ? '（未完了・スキップ）' : ''}`
   ).join(' / ');
 
+  if (sets.some(hasSideReps)) return sets.map(set => `SET ${set.position + 1}: ${formatProgressionWeight(set.actualLoadGrams!)} × ${repsLabel(set)}`).join(' / ');
   const loads = new Set(sets.map((set) => set.actualLoadGrams));
   if (loads.size === 1) {
     return `${formatProgressionWeight(sets[0].actualLoadGrams as number)} × ${sets.map((set) => set.actualReps).join(' / ')}`;

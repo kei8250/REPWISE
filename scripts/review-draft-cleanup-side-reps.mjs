@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // Use a dedicated Chromium profile. Every app API is intercepted with synthetic data.
 // This script never navigates to the public site or uses a real database.
+const navigationReview = process.argv.includes('--navigation');
 const fixtureOrigin = 'http://localhost:3000';
 const target = (
   await (await fetch('http://localhost:9223/json/list')).json()
@@ -21,8 +22,8 @@ let online = false;
 let posts = 0;
 const server = new Map();
 const processed = new Map();
-const fixturesDir = fileURLToPath(
-  new URL('../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
+const fixturesDir = process.env.REPWISE_REVIEW_OUTPUT_DIR ?? fileURLToPath(
+  new URL(navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
 );
 let master = {
   id: 'ex-bench-press',
@@ -574,6 +575,10 @@ async function select(selector, value) {
   );
 }
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+if (navigationReview) {
+  const { reviewWorkoutNavigation } = await import('./review-workout-navigation.mjs');
+  await reviewWorkoutNavigation({ send, evalJs, go, until, tap, clickText, pause, shot, setViewport, overflow, check, server, fixtureWorkout, setOnline: (value) => { online = value; }, fixturesDir });
+} else {
 await setViewport(375);
 online = true;
 await go(
@@ -812,6 +817,7 @@ check(
     server.get(activeId)?.exercises[0]?.sets[0]?.actualReps === 9,
   'sync_snapshot_preserves_both_sides',
 );
+}
 check(exceptions.length === 0, 'no_browser_exceptions');
 console.log(
   JSON.stringify({ browserExceptions: exceptions, fixtureSyncRequests: posts }),

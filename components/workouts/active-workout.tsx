@@ -74,7 +74,7 @@ export function ActiveWorkout({ id }: { id: string }) {
 
   if (!workout)
     return (
-      <div className="grid min-h-screen place-items-center px-6">
+      <div className="grid min-h-72 place-items-center px-6 py-10">
         <div className="text-center">
           {saveState === 'loading' ? (
             <LoaderCircle className="mx-auto size-7 animate-spin text-primary" />
@@ -84,9 +84,12 @@ export function ActiveWorkout({ id }: { id: string }) {
               <p className="mt-3 font-bold">
                 {error ?? '読み込めませんでした'}
               </p>
-              <Button className="mt-4" onClick={() => void retry()}>
+              <Button className="mt-4 min-h-11" onClick={() => void retry()}>
                 再試行
               </Button>
+              <a href={APP_ROUTES.home} className="mt-4 block min-h-11 p-3 font-bold text-primary">
+                ホームへ戻る
+              </a>
             </>
           )}
         </div>

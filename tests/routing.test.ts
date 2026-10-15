@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from '@/components/layout/app-shell';
 import { HomeV2 } from '@/components/home-v2';
+import ActiveWorkoutPage from '@/app/workouts/active/[id]/page';
 import {
   APP_ROUTES,
   DESKTOP_NAVIGATION,
@@ -62,7 +63,7 @@ describe('Phase 1A routing', () => {
     }
   });
 
-  it('PCサイドバーだけに詳細分析への通常リンクを追加する', () => {
+  it('PCとスマートフォンの両方で詳細分析へ移動できる', () => {
     const markup = renderToStaticMarkup(
       createElement(AppShell, null, createElement('span', null, 'content')),
     );
@@ -73,7 +74,15 @@ describe('Phase 1A routing', () => {
       label: '詳細分析',
     });
     expect(navigations[0]).toContain('href="/analytics"');
-    expect(navigations[1]).not.toContain('href="/analytics"');
+    expect(navigations[1]).toContain('href="/analytics"');
+  });
+
+  it('記録の読み込み状態にかかわらず、記録ページ全体にナビゲーションを残す', async () => {
+    const page = await ActiveWorkoutPage({ params: Promise.resolve({ id: 'missing-record' }) });
+    const markup = renderToStaticMarkup(page);
+    expect(markup).toContain('モバイルナビゲーション');
+    expect(markup).toContain('メインナビゲーション');
+    for (const item of DESKTOP_NAVIGATION) expect(markup).toContain(`href="${item.href}"`);
   });
 
   it('performs a full-page navigation to the supplied destination', () => {

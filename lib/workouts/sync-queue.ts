@@ -171,13 +171,19 @@ async function runSync(
           options.fetcher,
         );
       }
+      if (mutation.payload.permanentDelete && !result.permanentlyDeleted) throw new WorkoutApiError('削除を完了するにはサーバーの更新が必要です', 409);
       await acknowledgeWorkoutMutation(
-        mutation,
+        result.permanentlyDeleted ? { ...mutation, operation: 'delete', payload: { ...mutation.payload, permanentDelete: true } } : mutation,
         result.workout,
         options.databaseName,
       );
       processed += 1;
     } catch (cause) {
+      if (cause instanceof WorkoutApiError && cause.code === 'WORKOUT_PERMANENTLY_DELETED' && cause.deletedWorkout?.id === mutation.workoutId && cause.deletedWorkout.deletedAt) {
+        await acknowledgeWorkoutMutation({ ...mutation, operation: 'delete', payload: { ...mutation.payload, permanentDelete: true } }, cause.deletedWorkout, options.databaseName);
+        processed++;
+        continue;
+      }
       const message = cause instanceof WorkoutApiError
         ? `${cause.message}（HTTP ${cause.status}）${cause.issues.length ? '\n' + cause.issues.map((issue) => `${issue.path}: ${issue.message}`).join('\n') : ''}`
         : cause instanceof Error ? cause.message : '同期に失敗しました';

@@ -21,6 +21,7 @@ import {
   validateWorkoutSet,
   WorkoutConflictError,
   WorkoutNotFoundError,
+  WorkoutPermanentlyDeletedError,
   WorkoutVersionAheadError,
   WorkoutVersionConflictError,
 } from './validation';
@@ -222,6 +223,7 @@ export async function listWorkouts(
   const clauses: string[] = [];
   const values: (string | number)[] = [ownerId];
   if (status) { clauses.push('AND w.status = ?'); values.push(status); }
+  clauses.push(`AND (w.status <> 'completed' OR EXISTS (SELECT 1 FROM workout_exercise ce JOIN workout_set cs ON cs.workout_exercise_id = ce.id WHERE ce.workout_id = w.id AND cs.deleted_at IS NULL AND cs.status = 'completed' AND cs.actual_load_grams >= 0 AND cs.actual_reps > 0))`);
   if (filter.from) { clauses.push('AND w.local_date >= ?'); values.push(filter.from); }
   if (filter.to) { clauses.push('AND w.local_date <= ?'); values.push(filter.to); }
   if (filter.exerciseName || filter.bodyPart) {
@@ -606,7 +608,7 @@ async function mutationFingerprint(
       entityId: mutation.entityId,
       operation: mutation.operation,
       ...(includeBaseVersion ? { baseVersion: mutation.baseVersion } : {}),
-      payload: { workout },
+      payload: { workout, ...(mutation.payload.permanentDelete ? { permanentDelete: true } : {}) },
     }),
   );
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -658,7 +660,7 @@ function assertMutationCanApply(
     throw new WorkoutConflictError('進行中ワークアウトに適用できません');
   if (needsCompleted && (existing.status !== 'completed' || existing.deletedAt))
     throw new WorkoutConflictError('完了済みワークアウトに適用できません');
-  if (mutation.operation === 'delete' && (!['active', 'completed'].includes(existing.status) || existing.deletedAt)) throw new WorkoutConflictError('削除できる記録ではありません');
+  if (mutation.operation === 'delete' && (!['active', 'completed'].includes(existing.status) || (existing.deletedAt && !mutation.payload.permanentDelete))) throw new WorkoutConflictError('削除できる記録ではありません');
   if (
     mutation.operation === 'restore' &&
     (!['active', 'completed'].includes(existing.status) || !existing.deletedAt)
@@ -699,6 +701,8 @@ function processedMutationGate(
   result: WorkoutMutationResult,
   processedAt: string,
   acceptedTargetSourceVersion?: number,
+  effectiveBaseVersion = mutation.baseVersion,
+  creating = mutation.operation === 'create',
 ) {
   const commonValues = [
     mutation.mutationId,
@@ -711,8 +715,8 @@ function processedMutationGate(
     JSON.stringify(result),
     processedAt,
   ] as const;
-  if (mutation.operation === 'create') {
-    const sourceWorkoutId = mutation.payload.workout.sourceWorkoutId;
+  if (creating) {
+    const sourceWorkoutId = mutation.payload.permanentDelete ? null : mutation.payload.workout.sourceWorkoutId;
     const sourcePredicate = sourceWorkoutId
       ? `AND EXISTS (
            SELECT 1 FROM workout
@@ -748,7 +752,7 @@ function processedMutationGate(
     mutation.operation === 'restore'
       ? "status IN ('active', 'completed') AND deleted_at IS NOT NULL"
       : mutation.operation === 'delete'
-        ? "status IN ('active', 'completed') AND deleted_at IS NULL"
+        ? (mutation.payload.permanentDelete ? "status IN ('active', 'completed')" : "status IN ('active', 'completed') AND deleted_at IS NULL")
         : mutation.operation === 'edit'
         ? "status = 'completed' AND deleted_at IS NULL"
         : "status = 'active' AND deleted_at IS NULL";
@@ -763,12 +767,13 @@ function processedMutationGate(
            AND ${operationPredicate}
        )`,
     )
-    .bind(...commonValues, mutation.entityId, ownerId, mutation.baseVersion);
+    .bind(...commonValues, mutation.entityId, ownerId, effectiveBaseVersion);
 }
 
 export async function applyWorkoutMutation(
   db: D1Database,
   mutation: WorkoutMutationInput,
+  attempt = 0,
 ): Promise<WorkoutMutationResult> {
   const fingerprint = await mutationFingerprint(mutation);
   const legacyFingerprint = await mutationFingerprint(mutation, false);
@@ -793,11 +798,14 @@ export async function applyWorkoutMutation(
   }
 
   const existing = await getWorkout(db, mutation.entityId, true);
-  const creating = mutation.operation === 'create';
-  assertMutationCanApply(mutation, existing);
+  const permanent = mutation.operation === 'delete' && mutation.payload.permanentDelete === true;
+  const creating = mutation.operation === 'create' || (permanent && !existing);
+  const applicableMutation = permanent ? { ...mutation, baseVersion: existing?.version ?? 0 } : mutation;
+  if (!permanent && existing?.deletedAt && await db.prepare("SELECT mutation_id FROM processed_mutation WHERE owner_id = ? AND entity_id = ? AND json_extract(result_json, '$.permanentlyDeleted') = 1 LIMIT 1").bind(ownerId, mutation.entityId).first()) throw new WorkoutPermanentlyDeletedError(existing);
+  if (!permanent) assertMutationCanApply(mutation, existing);
 
   const applicableTargets =
-    creating && mutation.payload.workout.sourceWorkoutId
+    creating && !permanent && mutation.payload.workout.sourceWorkoutId
       ? await getApplicableAcceptedTargetsForCopy(
           db,
           mutation.payload.workout.sourceWorkoutId,
@@ -807,18 +815,20 @@ export async function applyWorkoutMutation(
     mutation.payload.workout,
     applicableTargets,
   );
-  const saved = makeServerSnapshot(
+  let saved = makeServerSnapshot(
     incoming,
     existing,
     mutation.operation,
     now(),
   );
+  if (permanent) saved = { ...saved, name: '削除済み', status: 'active', localDate: saved.updatedAt.slice(0, 10), timezone: 'UTC', startedAt: saved.updatedAt, endedAt: null, createdAt: saved.updatedAt, overallNote: '', rating: null, sourceWorkoutId: null, exercises: [] };
   if (mutation.operation === 'complete') assertWorkoutCanComplete(saved);
   if (creating) await assertCopySourceAvailable(db, saved);
   if (mutation.operation !== 'delete' && mutation.operation !== 'restore')
     await assertExerciseMastersExist(db, saved.exercises);
   const result: WorkoutMutationResult = {
     mutationId: mutation.mutationId,
+    ...(permanent ? { permanentlyDeleted: true as const } : {}),
     duplicate: false,
     workout: saved,
   };
@@ -830,8 +840,10 @@ export async function applyWorkoutMutation(
       result,
       saved.updatedAt,
       applicableTargets[0]?.sourceWorkoutVersion,
+      applicableMutation.baseVersion,
+      creating,
     ),
-    ...snapshotStatements(db, saved, creating, mutation),
+    ...snapshotStatements(db, saved, creating, applicableMutation),
     ...applicableTargets.map((target) =>
       db
         .prepare(
@@ -864,6 +876,16 @@ export async function applyWorkoutMutation(
         ),
     ),
   ];
+  if (permanent) {
+    const gate = `EXISTS (SELECT 1 FROM workout w WHERE w.id = ? AND w.owner_id = ? AND w.version = ? AND w.deleted_at IS NOT NULL) AND EXISTS (SELECT 1 FROM processed_mutation WHERE mutation_id = ? AND owner_id = ?)`;
+    statements.push(
+      db.prepare(`UPDATE workout SET started_at = ?, created_at = ? WHERE id = ? AND ${gate}`).bind(saved.startedAt, saved.createdAt, saved.id, saved.id, ownerId, saved.version, mutation.mutationId, ownerId),
+      db.prepare(`DELETE FROM workout_set WHERE workout_exercise_id IN (SELECT id FROM workout_exercise WHERE workout_id = ?) AND ${gate}`).bind(saved.id, saved.id, ownerId, saved.version, mutation.mutationId, ownerId),
+      db.prepare(`DELETE FROM workout_exercise WHERE workout_id = ? AND ${gate}`).bind(saved.id, saved.id, ownerId, saved.version, mutation.mutationId, ownerId),
+      db.prepare(`DELETE FROM accepted_next_target WHERE source_workout_id = ? AND owner_id = ? AND ${gate}`).bind(saved.id, ownerId, saved.id, ownerId, saved.version, mutation.mutationId, ownerId),
+      db.prepare(`UPDATE processed_mutation SET result_json = json_object('permanentlyDeleted', json('true'), 'mutationId', mutation_id, 'duplicate', json('false'), 'workout', json_set(json(?), '$.version', COALESCE(json_extract(CASE WHEN json_valid(result_json) THEN result_json ELSE '{}' END, '$.workout.version'), base_version + 1))) WHERE owner_id = ? AND entity_id = ? AND ${gate}`).bind(JSON.stringify(saved), ownerId, saved.id, saved.id, ownerId, saved.version, mutation.mutationId, ownerId),
+    );
+  }
   let batchResults: D1Result<unknown>[];
   try {
     batchResults = await db.batch(statements);
@@ -881,6 +903,7 @@ export async function applyWorkoutMutation(
     throw error;
   }
   if (Number(batchResults[0]?.meta.changes ?? 0) === 0) {
+    if (permanent) { if (attempt < 3) return applyWorkoutMutation(db, mutation, attempt + 1); throw new Error('削除処理は自動で再試行します'); }
     const latest = await getWorkout(db, mutation.entityId, true);
     assertMutationCanApply(mutation, latest);
     if (creating) await assertCopySourceAvailable(db, saved);

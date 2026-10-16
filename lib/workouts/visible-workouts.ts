@@ -18,7 +18,7 @@ export function mergeVisibleWorkouts(
   masters: ExerciseMaster[] = [],
 ) {
   const pending = new Set(mutations.map((item) => item.workoutId));
-  const items = new Map(server.map((item) => [item.id, item]));
+  const items = new Map(server.filter(item => (!status || item.status === status) && (item.status !== 'completed' || item.completedSetCount > 0)).map((item) => [item.id, item]));
   const latest = new Map<string, WorkoutMutation>();
   for (const mutation of mutations) {
     if ((latest.get(mutation.workoutId)?.sequence ?? -1) < mutation.sequence) latest.set(mutation.workoutId, mutation);
@@ -28,17 +28,20 @@ export function mergeVisibleWorkouts(
   }
   for (const draft of drafts) {
     if (draft.draftStatus === 'deleted' || draft.workout.deletedAt) { items.delete(draft.workoutId); continue; }
-    if (draft.workout.status === 'completed' && items.get(draft.workoutId)?.status === 'active') {
+    if ((draft.workout.status === 'completed' || draft.draftStatus === 'completed' || draft.draftStatus === 'completed_edit') && items.get(draft.workoutId)?.status === 'active') {
       items.delete(draft.workoutId);
     }
     const unsynced =
       pending.has(draft.workoutId) || draft.serverUpdatedAt === null;
     if (!unsynced && serverAvailable) continue;
-    const workout = draft.workout;
+    const committed = draft.editBaseline ?? latest.get(draft.workoutId)?.payload.workout;
+    const workout = ['completed', 'completed_edit'].includes(draft.draftStatus) && committed?.status === 'completed' ? committed : draft.workout;
     // A pending delete or status change also hides the old server summary.
     items.delete(workout.id);
     if (
       workout.deletedAt ||
+      (status === 'active' && ['completed', 'completed_edit'].includes(draft.draftStatus)) ||
+      (workout.status === 'completed' && !workout.exercises.some(exercise => exercise.sets.some(set => set.status === 'completed' && Number.isSafeInteger(set.actualLoadGrams) && (set.actualLoadGrams ?? -1) >= 0 && Number.isSafeInteger(set.actualReps) && (set.actualReps ?? 0) > 0))) ||
       (status && workout.status !== status) ||
       (filter.from && workout.localDate < filter.from) ||
       (filter.to && workout.localDate > filter.to) ||

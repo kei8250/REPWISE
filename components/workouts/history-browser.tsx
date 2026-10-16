@@ -162,6 +162,8 @@ export function HistoryBrowser({
             すべての期間
           </Button>
         </div>
+        <details open={Boolean(date || exerciseName || bodyPart) || undefined} className="space-y-3">
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-bold text-primary">日付・種目・部位で絞り込む</summary>
         <div>
           <label
             htmlFor="history-date"
@@ -222,6 +224,7 @@ export function HistoryBrowser({
             }}>条件をクリア</Button>
           </>}
         </form>
+        </details>
         <details
           onToggle={(event) => setCalendarOpen(event.currentTarget.open)}
         >

@@ -908,3 +908,68 @@ it('端末で削除待ちの完了記録はサーバー未反映でも分析・P
   expect(excluded.bodyParts).toEqual([]);
   expect(await getWorkout(d1, completed.workout.id)).not.toBeNull();
 });
+
+it('完全削除は実績・メモ・古い同期応答内の記録内容を消し、古い操作や復元で戻らない', async () => {
+  const completed = await createCompletedWorkout('permanent');
+  const other = await applyWorkoutMutation(d1, mutation('healthy-other-create', 'create', { ...workout(), id: 'healthy-other', name: '保護する記録', overallNote: '他記録メモ', exercises: [] }));
+  const deletion = mutation('permanent-delete', 'delete', completed.workout);
+  deletion.payload.permanentDelete = true;
+  const result = await applyWorkoutMutation(d1, deletion);
+  expect(result.permanentlyDeleted).toBe(true);
+  expect(result.workout).toMatchObject({ name: '削除済み', exercises: [], overallNote: '', rating: null });
+  expect(sqlite.prepare('SELECT COUNT(*) AS count FROM workout_set').get()).toMatchObject({ count: 0 });
+  expect(sqlite.prepare('SELECT COUNT(*) AS count FROM workout_exercise').get()).toMatchObject({ count: 0 });
+  const receipts = sqlite.prepare('SELECT result_json FROM processed_mutation WHERE entity_id = ?').all(completed.workout.id) as { result_json: string }[];
+  for (const receipt of receipts) expect(JSON.parse(receipt.result_json).workout).toMatchObject({ name: '削除済み', exercises: [], overallNote: '' });
+  expect((await applyWorkoutMutation(d1, deletion)).duplicate).toBe(true);
+  await expect(applyWorkoutMutation(d1, mutation('permanent-restore', 'restore', result.workout))).rejects.toThrow('復元できません');
+  await expect(applyWorkoutMutation(d1, mutation('permanent-late-update', 'edit', completed.workout))).rejects.toThrow();
+  expect(await listWorkouts(d1, 'completed')).toEqual([]);
+  expect((await listWorkouts(d1, 'active')).map(row => row.id)).toEqual([other.workout.id]);
+  expect(await getWorkout(d1, other.workout.id)).toMatchObject({ name: '保護する記録', overallNote: '他記録メモ' });
+});
+
+it('任意の目標値の不正だけで記録の同期を止めず、未設定として実績を維持する', async () => {
+  const { validateWorkoutSnapshot } = await import('@/lib/workouts/validation');
+  const original = workout();
+  const set = original.exercises[0].sets[0];
+  set.targetRepMin = -10;
+  set.targetLoadGrams = 2.5;
+  const validated = validateWorkoutSnapshot(original);
+  expect(validated.exercises[0].sets[0]).toMatchObject({ targetRepMin: null, targetLoadGrams: null, actualLoadGrams: set.actualLoadGrams, actualReps: set.actualReps });
+  const result = await applyWorkoutMutation(d1, mutation('optional-goals-create', 'create', validated));
+  expect(result.workout.exercises[0].sets[0].targetRepMin).toBeNull();
+});
+
+it('完全削除の直前に古い削除が先行しても、同じ対象の最終削除を完了する', async () => {
+  const completed = await createCompletedWorkout('permanent-race');
+  const request = mutation('permanent-race-delete', 'delete', completed.workout);
+  request.payload.permanentDelete = true;
+  const originalBatch = d1.batch.bind(d1);
+  const spy = vi.spyOn(d1, 'batch').mockImplementationOnce(async statements => {
+    sqlite.prepare('UPDATE workout SET version = version + 1, deleted_at = ? WHERE id = ?').run(timestamp, completed.workout.id);
+    return originalBatch(statements);
+  });
+  try {
+    expect((await applyWorkoutMutation(d1, request)).permanentlyDeleted).toBe(true);
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM workout_set').get()).toMatchObject({ count: 0 });
+    expect((await getWorkout(d1, completed.workout.id, true))?.overallNote).toBe('');
+  } finally { spy.mockRestore(); }
+});
+
+it('未送信の作成や不正入力があっても完全削除はIDで完了し、遅い作成を復活させない', async () => {
+  vi.doMock('@/db', () => ({ getD1: () => d1 }));
+  try {
+    const { POST } = await import('@/app/api/v2/sync/route');
+    const deleting = mutation('delete-before-create', 'delete', workout(), 0);
+    deleting.payload.permanentDelete = true;
+    deleting.payload.workout.exercises[0].sets[0].actualReps = -10;
+    const response = await POST(new Request('http://fixture.test/api/v2/sync', { method: 'POST', body: JSON.stringify(deleting) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ permanentlyDeleted: true, workout: { exercises: [], deletedAt: expect.any(String) } });
+    const late = await POST(new Request('http://fixture.test/api/v2/sync', { method: 'POST', body: JSON.stringify(mutation('late-cancelled-create', 'create', workout())) }));
+    expect(late.status).toBe(410);
+    expect(await late.json()).toMatchObject({ code: 'WORKOUT_PERMANENTLY_DELETED' });
+    expect(await listWorkouts(d1)).toEqual([]);
+  } finally { vi.doUnmock('@/db'); }
+});

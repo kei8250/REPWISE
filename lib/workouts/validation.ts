@@ -23,6 +23,11 @@ export class WorkoutValidationError extends Error {
   }
 }
 
+export class WorkoutPermanentlyDeletedError extends Error {
+  readonly code = 'WORKOUT_PERMANENTLY_DELETED';
+  constructor(public readonly workout: Workout) { super('削除した記録は復元できません'); }
+}
+
 export class WorkoutNotFoundError extends Error {
   constructor(message = '対象のデータが見つかりません') {
     super(message);
@@ -253,7 +258,7 @@ export function validateWorkoutSet(value: unknown, path = 'set', mode: RepMode =
   const targetRepMin = integer(
     input.targetRepMin,
     `${path}.targetRepMin`,
-    issues,
+    [],
     0,
     999,
     true,
@@ -261,7 +266,7 @@ export function validateWorkoutSet(value: unknown, path = 'set', mode: RepMode =
   const targetRepMax = integer(
     input.targetRepMax,
     `${path}.targetRepMax`,
-    issues,
+    [],
     0,
     999,
     true,
@@ -278,7 +283,7 @@ export function validateWorkoutSet(value: unknown, path = 'set', mode: RepMode =
     targetLoadGrams: integer(
       input.targetLoadGrams,
       `${path}.targetLoadGrams`,
-      issues,
+      [],
       0,
       2_000_000,
       true,
@@ -509,7 +514,9 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
       Number.MAX_SAFE_INTEGER,
     ) ?? 0;
   let workout: Workout | null = null;
-  try {
+  if (operation === 'delete' && record(input.payload).permanentDelete === true) {
+    workout = { id: entityId, name: '削除済み', status: 'active', localDate: createdAt.slice(0, 10), timezone: 'UTC', startedAt: createdAt, endedAt: null, overallNote: '', rating: null, version: baseVersion, createdAt, updatedAt: createdAt, deletedAt: createdAt, sourceWorkoutId: null, exercises: [] };
+  } else try {
     workout = validateWorkoutSnapshot(record(input.payload).workout, entityId);
   } catch (error) {
     if (error instanceof WorkoutValidationError) issues.push(...error.issues);
@@ -543,12 +550,13 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
     entityId,
     operation,
     baseVersion,
-    payload: { workout },
+    payload: { workout, ...(record(input.payload).permanentDelete === true && operation === 'delete' ? { permanentDelete: true as const } : {}) },
     createdAt,
   };
 }
 
 export function toErrorResponse(error: unknown) {
+  if (error instanceof WorkoutPermanentlyDeletedError) return { status: 410, body: { error: error.message, code: error.code, workout: error.workout } };
   if (error instanceof WorkoutValidationError)
     return {
       status: 400,

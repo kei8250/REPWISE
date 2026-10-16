@@ -45,6 +45,7 @@ const completed = (): Workout => ({
   status: 'completed',
   endedAt: startedAt,
   overallNote: '入力したメモ',
+  exercises: [{ id: 'bench', exerciseId: 'bench', position: 0, status: 'completed', exerciseNameSnapshot: 'ベンチ', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [{ ...createSet(0), status: 'completed', actualLoadGrams: 60000, actualReps: 10 }] }],
 });
 const draft = (
   workout = completed(),
@@ -288,7 +289,7 @@ it('入力エラーをHTTP番号・項目名付きで保持して同期を停止
 it('同期待ちの履歴も同じ種目の名前・部位で絞り込み、別種目の部位とは混合しない', () => {
   const workout = completed();
   workout.exercises = [
-    { id: 'bench', exerciseId: 'bench', position: 0, status: 'completed', exerciseNameSnapshot: '旧ベンチ名', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [createSet(0)] },
+    { id: 'bench', exerciseId: 'bench', position: 0, status: 'completed', exerciseNameSnapshot: '旧ベンチ名', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [{ ...createSet(0), status: 'completed', actualLoadGrams: 60000, actualReps: 10 }] },
     { id: 'row', exerciseId: 'row', position: 1, status: 'completed', exerciseNameSnapshot: 'ロウ', note: '', startedAt, completedAt: startedAt, createdAt: startedAt, updatedAt: startedAt, sets: [] },
   ];
   const masters = [
@@ -321,4 +322,20 @@ it('多数のページを再取得しても1回のAPI取得件数を上限内に
   expect(page.items[59].id).toBe('draft-21');
   expect(page.hasMore).toBe(true);
   expect(list.mock.calls.every(call => (call[1] ?? 0) <= 31)).toBe(true);
+});
+
+it('編集中の古いactive表示があっても完了した基準を使い、2つの履歴へ重複表示しない', () => {
+  const recorded = completed();
+  const cached = { ...draft({ ...recorded, status: 'active', endedAt: null }), draftStatus: 'completed_edit' as const, editBaseline: recorded };
+  const stale = { id: recorded.id, status: 'active', completedSetCount: 1 } as never;
+  expect(mergeVisibleWorkouts([stale], [cached], [], 'active')).toEqual([]);
+  expect(mergeVisibleWorkouts([], [cached], [], 'completed')).toHaveLength(1);
+});
+
+it('実績のない完了フラグや、削除済みの記録を完了一覧に出さない', () => {
+  const empty = { ...completed(), exercises: [] };
+  expect(mergeVisibleWorkouts([], [draft(empty)], [], 'completed')).toEqual([]);
+  expect(mergeVisibleWorkouts([{ id: 'empty', status: 'completed', completedSetCount: 0 } as never], [], [], 'completed')).toEqual([]);
+  const deleted = { ...completed(), deletedAt: startedAt };
+  for (const status of ['active', 'completed'] as const) expect(mergeVisibleWorkouts([{ id: deleted.id, status, completedSetCount: 1 } as never], [draft(deleted)], [], status)).toEqual([]);
 });

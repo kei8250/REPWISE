@@ -3,7 +3,7 @@
 import { invalidateAnalyticsDetail } from '@/lib/analytics/detail-cache';
 import { invalidateHomeAnalyticsSummary } from '@/lib/analytics/home-cache';
 import { useEffect } from 'react';
-import { listWorkoutMutations, recoverLegacyWorkoutQueue } from '@/lib/workouts/local-drafts';
+import { listWorkoutMutations, recoverLegacyWorkoutQueue, readLocalWorkoutSources, upgradeHiddenDeletion } from '@/lib/workouts/local-drafts';
 import { syncAutomatically } from '@/lib/workouts/sync-timing';
 
 export function SyncRecovery() {
@@ -11,6 +11,8 @@ export function SyncRecovery() {
     let active = true;
     const recover = async () => {
       await recoverLegacyWorkoutQueue().catch(() => undefined);
+      const local = await readLocalWorkoutSources().catch(() => null);
+      if (local) await Promise.all(local.drafts.filter(draft => draft.draftStatus === 'deleted' && !draft.permanentDeletionConfirmed).map(draft => upgradeHiddenDeletion(draft.workoutId).catch(() => undefined)));
       const queued = await listWorkoutMutations().catch(() => []);
       if (!active) return;
       const workoutIds = [...new Set(queued.map((item) => item.workoutId))];

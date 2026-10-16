@@ -24,6 +24,8 @@ export type LocalDraftStatus =
   | 'deleted';
 
 export interface LocalWorkoutDraft {
+  permanentDeletionRequested?: boolean;
+  permanentDeletionConfirmed?: boolean;
   automaticDeletionRepairVersion?: number;
   deletionConfirmedAt?: string;
   editBaseline?: Workout;
@@ -335,6 +337,7 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   workout: Workout,
   operation: WorkoutMutationOperation,
   options: {
+    permanentDelete?: boolean;
     localUpdatedAt?: string;
     serverUpdatedAt?: string | null;
     databaseName?: string;
@@ -342,7 +345,7 @@ export async function saveWorkoutDraftAndEnqueueMutation(
 ) {
   const database = await openDatabase(options.databaseName);
   const transaction = database.transaction(
-    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME],
+    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME],
     'readwrite',
   );
   const complete = transactionComplete(transaction);
@@ -364,7 +367,7 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
   const [currentDraftValue, queuedValues] = await Promise.all([
     requestResult(drafts.get(workout.id)),
-    requestResult(queue.index('workoutId').getAll(workout.id)),
+    requestResult(queue.getAll()).then(values => values.filter(value => mutationBelongsTo(value, workout.id))),
   ]);
   const existingMutations = queuedValues
     .filter(isWorkoutMutation)
@@ -387,7 +390,7 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     ? currentDraftValue
     : null;
   if (currentDraft &&
-      ((operation === 'delete' && currentDraft.draftStatus === 'deleted') ||
+      ((operation === 'delete' && currentDraft.draftStatus === 'deleted' && !options.permanentDelete) ||
        (operation === 'restore' && currentDraft.draftStatus !== 'deleted') ||
        (currentDraft.draftStatus === 'deleted' && operation !== 'restore' && operation !== 'delete'))) {
     await complete;
@@ -404,6 +407,8 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   const baseVersion =
     operation === 'create'
       ? 0
+      : options.permanentDelete
+        ? Math.max(0, currentDraft?.serverUpdatedAt === null ? 0 : (currentDraft?.serverVersion ?? workout.version))
       : Math.max(
           0,
           lastPredecessor
@@ -417,6 +422,13 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     localUpdatedAt,
     baseVersion,
   );
+  if (operation === 'delete' && options.permanentDelete) {
+    transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({ id: crypto.randomUUID(), reason: 'permanent-delete-request', draft: currentDraftValue, mutations: queuedValues });
+    for (const old of queuedValues) queue.delete(old.mutationId);
+    mutation.payload.permanentDelete = true;
+    mutation.payload.workout = { id: workout.id, name: '削除済み', status: 'active', localDate: localUpdatedAt.slice(0, 10), timezone: 'UTC', startedAt: localUpdatedAt, endedAt: null, overallNote: '', rating: null, version: baseVersion, createdAt: localUpdatedAt, updatedAt: localUpdatedAt, deletedAt: localUpdatedAt, sourceWorkoutId: null, exercises: [] };
+    draft.permanentDeletionRequested = true;
+  }
   mutation.sequence = Math.max(mutation.sequence, Number(lastQueued?.key ?? 0) + 1);
   drafts.put(draft);
   for (const value of superseded) {
@@ -582,7 +594,7 @@ export async function acknowledgeWorkoutMutation(
 ) {
   const database = await openDatabase(databaseName);
   const transaction = database.transaction(
-    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME],
+    [LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME],
     'readwrite',
   );
   const complete = transactionComplete(transaction);
@@ -599,13 +611,15 @@ export async function acknowledgeWorkoutMutation(
     isWorkoutMutation,
   );
   if (isLocalWorkoutDraft(current)) {
-    const hasLaterMutation = remaining.some(
+    let hasLaterMutation = remaining.some(
       (queued) => queued.sequence > mutation.sequence,
     );
     const isLatestSnapshot =
       !hasLaterMutation && current.localUpdatedAt <= mutation.createdAt;
     const hasUnsubmittedEdit = current.draftStatus === 'completed_edit' && (Boolean(current.editBaseline) || !isLatestSnapshot);
-    const syncedWorkout = isLatestSnapshot && !hasUnsubmittedEdit
+    const permanent = mutation.operation === 'delete' && mutation.payload.permanentDelete === true;
+    if (permanent) { for (const value of (await requestResult(queue.getAll()))) if (mutationBelongsTo(value, mutation.workoutId)) queue.delete(value.mutationId); hasLaterMutation = false; }
+    const syncedWorkout = permanent ? { ...structuredClone(serverWorkout), name: '削除済み', overallNote: '', rating: null, exercises: [] } : isLatestSnapshot && !hasUnsubmittedEdit
       ? structuredClone(serverWorkout)
       : current.workout;
     const acknowledgedDraftStatus: LocalDraftStatus =
@@ -617,16 +631,24 @@ export async function acknowledgeWorkoutMutation(
             mutation.operation === 'complete'
           ? 'completed'
           : 'active';
+    if (permanent) {
+      const archive = transaction.objectStore(SYNC_RECOVERY_STORE_NAME);
+      const originals = await requestResult(archive.getAll());
+      for (const original of originals) {
+        if (original.draft?.workoutId === mutation.workoutId || mutationBelongsTo(original.mutation, mutation.workoutId) || (Array.isArray(original.mutations) && original.mutations.some((value: unknown) => mutationBelongsTo(value, mutation.workoutId)))) archive.delete(original.id);
+      }
+    }
     drafts.put({
       ...current,
+      ...(permanent ? { permanentDeletionConfirmed: true, editBaseline: undefined } : {}),
       workout: syncedWorkout,
-      draftStatus: hasLaterMutation || hasUnsubmittedEdit || !isLatestSnapshot
+      draftStatus: permanent ? 'deleted' : hasLaterMutation || hasUnsubmittedEdit || !isLatestSnapshot
         ? current.draftStatus
         : acknowledgedDraftStatus,
       ...(hasUnsubmittedEdit && current.editBaseline && !hasLaterMutation && serverWorkout.status === 'completed'
         ? { editBaseline: { ...current.editBaseline, version: serverWorkout.version, updatedAt: serverWorkout.updatedAt } } : {}),
       ...(!hasLaterMutation && mutation.operation === 'delete' && serverWorkout.deletedAt ? { deletionConfirmedAt: new Date().toISOString() } : {}),
-      completedAt:
+      completedAt: permanent ? null :
         syncedWorkout.status === 'completed'
           ? (syncedWorkout.endedAt ?? current.completedAt)
           : current.completedAt,
@@ -755,6 +777,9 @@ export function selectWorkoutDetailForDisplay(
   serverKnownMissing = false,
   missingServerVersion: number | null = null,
 ): WorkoutRestoreResult {
+  if (localDraft?.draftStatus === 'completed_edit' && localDraft.workout.status !== 'completed' && localDraft.editBaseline?.status === 'completed') {
+    return { workout: { ...localDraft.workout, status: 'completed', endedAt: localDraft.editBaseline.endedAt }, source: 'local' };
+  }
   if (localDraft?.draftStatus === 'completed' && localDraft.workout.status !== 'completed') {
     return serverWorkout?.status === 'completed' ? { workout: serverWorkout, source: 'server' } : { workout: null, source: 'none' };
   }
@@ -1083,6 +1108,7 @@ export async function reconcileDeletedWorkout(
   if (server && !server.deletedAt) {
     const deleted = { ...structuredClone(server), deletedAt: current.workout.deletedAt };
     const mutation = createMutationRecord(deleted, 'delete', new Date().toISOString(), server.version);
+    if (current.permanentDeletionRequested) mutation.payload.permanentDelete = true;
     const last = await requestResult(queue.index('sequence').openCursor(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER - 1), 'prev'));
     mutation.sequence = Math.max(mutation.sequence, Number(last?.key ?? 0) + 1);
     queue.put(mutation);
@@ -1093,4 +1119,49 @@ export async function reconcileDeletedWorkout(
   }
   await complete;
   notifyQueueChanged();
+}
+
+
+// A new, explicit correction can replace rejected requests, never an in-flight or
+// accepted request. Keep originals until the user permanently deletes the record.
+export async function replaceRejectedWorkoutChanges(
+  workoutId: string,
+  expected: { draft: LocalWorkoutDraft; mutations: WorkoutMutation[] },
+  serverVersion: number,
+  databaseName = LOCAL_DRAFT_DATABASE_NAME,
+  operation?: 'replace' | 'complete' | 'edit',
+) {
+  const database = await openDatabase(databaseName);
+  const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readwrite');
+  const complete = transactionComplete(transaction);
+  const queue = transaction.objectStore(WORKOUT_MUTATION_STORE_NAME);
+  const draft = await requestResult(transaction.objectStore(LOCAL_DRAFT_STORE_NAME).get(workoutId));
+  const raw = (await requestResult(queue.getAll())).filter(value => mutationBelongsTo(value, workoutId));
+  const mutations = raw.filter(isWorkoutMutation).sort((a, b) => a.sequence - b.sequence);
+  const head = mutations[0];
+  const latest = mutations.at(-1);
+  if (JSON.stringify(draft) !== JSON.stringify(expected.draft) || JSON.stringify(mutations) !== JSON.stringify(expected.mutations) ||
+      raw.length !== mutations.length || !head || !latest || head === latest || head.syncStatus !== 'blocked' || !head.lastError?.includes('HTTP 400') ||
+      head.baseVersion !== serverVersion || latest.syncStatus !== 'pending' || latest.retryCount !== 0 ||
+      mutations.some(item => item.syncStatus === 'syncing' || item.syncStatus === 'conflict' || item.operation === 'delete' || item.operation === 'restore')) {
+    await complete;
+    return false;
+  }
+  transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({ id: crypto.randomUUID(), reason: 'explicit-input-correction', draft, mutations });
+  for (const item of mutations) queue.delete(item.mutationId);
+  const correction = createMutationRecord(latest.payload.workout, operation ?? latest.operation, latest.createdAt, serverVersion);
+  const last = await requestResult(queue.index('sequence').openCursor(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER - 1), 'prev'));
+  correction.sequence = Math.max(correction.sequence, Number(last?.key ?? 0) + 1);
+  queue.put(correction);
+  await complete;
+  notifyQueueChanged();
+  return true;
+}
+
+export async function upgradeHiddenDeletion(workoutId: string, databaseName = LOCAL_DRAFT_DATABASE_NAME) {
+  const draft = await getLocalWorkoutDraft(workoutId, databaseName);
+  if (!draft || draft.draftStatus !== 'deleted' || draft.permanentDeletionConfirmed) return;
+  const queue = await listWorkoutMutations(workoutId, databaseName);
+  if (queue.some(item => item.payload.permanentDelete)) return;
+  await saveWorkoutDraftAndEnqueueMutation(draft.workout, 'delete', { databaseName, permanentDelete: true });
 }

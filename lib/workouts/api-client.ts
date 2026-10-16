@@ -25,6 +25,7 @@ export class WorkoutApiError extends Error {
     public readonly issues: Array<{ path: string; message: string }> = [],
     public readonly code: string | null = null,
     public readonly conflict: WorkoutVersionConflictDetails | null = null,
+    public readonly deletedWorkout: Workout | null = null,
   ) {
     super(message);
     this.name = 'WorkoutApiError';
@@ -64,6 +65,7 @@ async function request<T>(
             issues?: Array<{ path: string; message: string }>;
             code?: string;
             conflict?: WorkoutVersionConflictDetails;
+            workout?: Workout;
           })
         : null;
     throw new WorkoutApiError(
@@ -74,6 +76,7 @@ async function request<T>(
       errorBody?.issues ?? [],
       errorBody?.code ?? null,
       errorBody?.conflict ?? null,
+      errorBody?.code === 'WORKOUT_PERMANENTLY_DELETED' ? errorBody.workout ?? null : null,
     );
   }
   if (body === null)

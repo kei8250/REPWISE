@@ -123,6 +123,7 @@ export type WorkoutMutationSyncStatus =
   | 'conflict';
 
 export interface WorkoutMutationPayload {
+  permanentDelete?: true;
   workout: Workout;
 }
 
@@ -146,6 +147,7 @@ export interface WorkoutMutation extends WorkoutMutationInput {
 }
 
 export interface WorkoutMutationResult {
+  permanentlyDeleted?: true;
   mutationId: string;
   duplicate: boolean;
   workout: Workout;

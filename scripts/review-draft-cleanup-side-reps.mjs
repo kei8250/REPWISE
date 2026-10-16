@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // Use a dedicated Chromium profile. Every app API is intercepted with synthetic data.
 // This script never navigates to the public site or uses a real database.
+const cleanHistory = process.argv.includes('--clean-history');
 const simpleSettings = process.argv.includes('--simple-settings');
 const reviewUx = process.argv.includes('--review-ux');
 const legacySyncReview = process.argv.includes('--legacy-sync');
@@ -32,7 +33,7 @@ let posts = 0;
 const server = new Map();
 const processed = new Map();
 const fixturesDir = process.env.REPWISE_REVIEW_OUTPUT_DIR ?? fileURLToPath(
-  new URL(simpleSettings ? '../docs/reviews/simple-settings/' : reviewUx ? '../docs/reviews/reference-review-ux/' : legacySyncReview ? '../docs/reviews/legacy-sync-recovery/' : stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
+  new URL(cleanHistory ? '../docs/reviews/clean-history/' : simpleSettings ? '../docs/reviews/simple-settings/' : reviewUx ? '../docs/reviews/reference-review-ux/' : legacySyncReview ? '../docs/reviews/legacy-sync-recovery/' : stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
 );
 let master = {
   id: 'ex-bench-press',
@@ -318,13 +319,14 @@ ws.addEventListener('message', async (event) => {
         throw new Error(
           `Unexpected baseVersion ${mutation.baseVersion}, expected ${version}`,
         );
-      const workout = {
+      let workout = {
         ...mutation.payload.workout,
         version: version + 1,
         updatedAt: new Date().toISOString(),
       };
+      if (mutation.payload.permanentDelete) workout = { ...workout, name: '削除済み', overallNote: '', rating: null, exercises: [] };
       server.set(workout.id, workout);
-      data = { mutationId: mutation.mutationId, duplicate: false, workout };
+      data = { mutationId: mutation.mutationId, duplicate: false, workout, ...(mutation.payload.permanentDelete ? { permanentlyDeleted: true } : {}) };
       processed.set(mutation.mutationId, data);
     }
   } else if (u.pathname === '/api/v2/exercises') {
@@ -591,7 +593,10 @@ async function select(selector, value) {
 }
 try {
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
-if (simpleSettings) {
+if (cleanHistory) {
+  const { reviewCleanHistory } = await import('./review-clean-history.mjs');
+  await reviewCleanHistory({ evalJs, go, reload, until, tap, type, clickText, shot, setViewport, overflow, check, server, fixtureWorkout, fixturesDir, setOnline: value => { online = value; } });
+} else if (simpleSettings) {
   const { reviewSimpleSettings } = await import('./review-simple-settings.mjs');
   await reviewSimpleSettings({ evalJs, go, reload, until, tap, type, select, clickText, shot, setViewport, overflow, check, server, fixtureWorkout, fixturesDir, setOnline: value => { online = value; } });
 } else if (reviewUx) {

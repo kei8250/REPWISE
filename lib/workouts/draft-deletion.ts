@@ -25,6 +25,7 @@ export async function deleteActiveWorkout(
 
 export async function restoreDeletedWorkout(id: string, databaseName?: string) {
   const local = await getLocalWorkoutDraft(id, databaseName);
+  if (local?.permanentDeletionRequested || local?.permanentDeletionConfirmed) throw new Error('削除した記録は復元できません');
   if (!local || !['active', 'completed'].includes(local.workout.status) || !local.workout.deletedAt)
     throw new Error('取り消せる削除記録がありません');
   const restored = {
@@ -46,6 +47,6 @@ export async function deleteWorkoutRecord(id: string, options: { databaseName?: 
   if (current.deletedAt) return current;
   const timestamp = new Date().toISOString();
   const deleted = { ...current, deletedAt: timestamp, updatedAt: timestamp };
-  await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete', { databaseName: options.databaseName });
+  await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete', { databaseName: options.databaseName, permanentDelete: true });
   return deleted;
 }

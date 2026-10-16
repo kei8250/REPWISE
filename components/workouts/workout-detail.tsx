@@ -13,7 +13,6 @@ import {
   LoaderCircle,
   Pencil,
   Play,
-  RotateCcw,
   Trash2,
 } from 'lucide-react';
 import {
@@ -256,37 +255,13 @@ export function WorkoutDetail({ id }: { id: string }) {
     setWorkout(deleted);
     setSyncState('syncing');
     try {
-      await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete');
+      await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete', { permanentDelete: true });
       await syncPendingWorkoutMutations(id);
       await refreshSyncState();
       await refreshLocalWorkout();
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : '削除を保存できませんでした',
-      );
-      setSyncState('error');
-    }
-  }
-
-  async function restoreWorkout() {
-    if (!workout) return;
-    const restored = {
-      ...workout,
-      status: 'completed' as const,
-      deletedAt: null,
-      updatedAt: new Date().toISOString(),
-    };
-    setWorkout(restored);
-    setSyncState('syncing');
-    try {
-      await saveWorkoutDraftAndEnqueueMutation(restored, 'restore');
-      await syncPendingWorkoutMutations(id);
-      const queue = await refreshSyncState();
-      const local = await refreshLocalWorkout();
-      if (queue.total === 0 && local) setServerBaseline(local.workout);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : '復元を保存できませんでした',
       );
       setSyncState('error');
     }
@@ -368,73 +343,8 @@ export function WorkoutDetail({ id }: { id: string }) {
         <ChevronLeft /> 履歴へ
       </a>
 
-      {deleted && !editing ? (
-        <Card className="rounded-3xl py-8 shadow-none">
-          <CardContent className="space-y-4 px-6 text-center">
-            <div className="mx-auto grid size-12 place-items-center rounded-full bg-destructive/10 text-destructive">
-              <Trash2 />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black">
-                {syncState === 'conflict'
-                  ? '削除を停止しました'
-                  : '削除しました'}
-              </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {syncState === 'conflict'
-                  ? 'サーバー側の記録は削除されていません。'
-                  : '通常の履歴には表示されません。取り消すと元の記録に戻せます。'}
-              </p>
-            </div>
-            <p
-              data-sync-state={syncState}
-              className="text-xs font-bold text-muted-foreground"
-            >
-              {syncState === 'saved' ? '削除を同期済み' : syncState === 'syncing' ? '削除を同期中' : syncState === 'error' ? '削除の同期に失敗・端末では削除済み' : syncState === 'conflict' ? '削除の同期が競合しています' : '削除の同期待ち'}
-            </p>
-            {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
-            {(syncState === 'error' || syncState === 'pending') && <Button type="button" variant="outline" className="min-h-11" onClick={() => void retrySync()}>削除の同期を再試行</Button>}
-            {syncState === 'conflict' ? (
-              <div
-                role="alert"
-                className="rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-950"
-              >
-                <p>
-                  別の変更が存在するため、削除はサーバーへ適用されていません。ローカルの削除操作は保持されています。
-                </p>
-                {serverReview && (
-                  <p className="mt-2 text-xs">
-                    端末の同期元: v{conflictBaseVersion ?? '—'} · サーバー側: v
-                    {serverReview.version}
-                  </p>
-                )}
-                {serverReviewError && (
-                  <p className="mt-2 text-xs text-destructive">
-                    {serverReviewError}
-                  </p>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3 bg-white"
-                  onClick={() => void reviewServer()}
-                >
-                  サーバー側を再確認
-                </Button>
-              </div>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void restoreWorkout()}
-                disabled={syncState === 'syncing'}
-              >
-                <RotateCcw /> 元に戻す
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+      {deleted ? (
+        <Card className="rounded-3xl py-8"><CardContent className="space-y-4 px-6 text-center"><h1 className="text-2xl font-black">削除しました</h1><p className="text-sm text-muted-foreground">この記録は履歴に表示されません。</p><a href={APP_ROUTES.history} className={buttonVariants({ variant: 'outline' })}>履歴へ戻る</a></CardContent></Card>
       ) : (
         <>
           <div>
@@ -569,7 +479,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                             このワークアウトを削除しますか？
                           </AlertDialogTitle>
                           <AlertDialogDescription>
-                            履歴から非表示になります。削除後も「元に戻す」で復元できます。
+                            この記録を削除します。削除すると元に戻せません。
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>

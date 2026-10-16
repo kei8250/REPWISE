@@ -13,7 +13,7 @@ import { loadVisibleWorkouts, mergeVisibleWorkouts } from '@/lib/workouts/visibl
 import { getAnalytics } from '@/lib/workouts/api-client';
 import { syncAutomatically } from '@/lib/workouts/sync-timing';
 import { recoverPendingDeletion } from '@/lib/workouts/deletion-recovery';
-import { deleteWorkoutRecord } from '@/lib/workouts/draft-deletion';
+import { deleteWorkoutRecord, restoreDeletedWorkout } from '@/lib/workouts/draft-deletion';
 import type { Workout, WorkoutMutation } from '@/lib/workouts/types';
 
 const time = '2026-10-15T12:00:00.000Z';
@@ -251,12 +251,12 @@ describe('delete intent recovers without making users inspect queues', () => {
     await deleteWorkoutRecord('legacy');
     await saveWorkoutDraftAndEnqueueMutation(workout('healthy'), 'create');
     const healthy = await snapshot('healthy');
-    expect(await recoverPendingDeletion('legacy', { fetcher: async () => Response.json({ workout: workout() }) })).toBe(true);
+    expect(await recoverPendingDeletion('legacy', { fetcher: async () => Response.json({ workout: workout() }) })).toBe(false);
     const queue = await listWorkoutMutations('legacy');
-    expect(queue).toEqual([expect.objectContaining({ operation: 'delete', baseVersion: 1, payload: { workout: expect.objectContaining({ overallNote: '未同期のメモを保護' }) } })]);
-    expect((await exportWorkoutRecoveryData()).recoveryArchive).toContainEqual(expect.objectContaining({ reason: 'automatic-delete-reconciliation', mutations: expect.arrayContaining([expect.objectContaining({ mutationId: mutation.mutationId, payload: { workout: expect.objectContaining({ overallNote: '古い未送信のメモ' }) } })]) }));
+    expect(queue).toEqual([expect.objectContaining({ operation: 'delete', baseVersion: 1, payload: { permanentDelete: true, workout: expect.objectContaining({ overallNote: '', exercises: [] }) } })]);
+    expect((await exportWorkoutRecoveryData()).recoveryArchive).toContainEqual(expect.objectContaining({ reason: 'permanent-delete-request', mutations: expect.arrayContaining([expect.objectContaining({ mutationId: mutation.mutationId, payload: { workout: expect.objectContaining({ overallNote: '古い未送信のメモ' }) } })]) }));
     expect(await snapshot('healthy')).toEqual(healthy);
-    await syncPendingWorkoutMutations('legacy', { fetcher: async () => Response.json({ mutationId: queue[0].mutationId, duplicate: false, workout: { ...workout(), version: 2, deletedAt: time } }) });
+    await syncPendingWorkoutMutations('legacy', { fetcher: async () => Response.json({ mutationId: queue[0].mutationId, duplicate: false, permanentlyDeleted: true, workout: { ...workout(), version: 2, deletedAt: time } }) });
     expect(await listWorkoutMutations('legacy')).toEqual([]);
   });
   it('通常の自動同期だけで400更新の後ろの削除まで完了する', async () => {
@@ -271,11 +271,11 @@ describe('delete intent recovers without making users inspect queues', () => {
       const mutation = JSON.parse(init.body);
       calls.push(mutation.operation);
       if (mutation.operation === 'replace') return Response.json({ error: '古い入力不正' }, { status: 400 });
-      return Response.json({ mutationId: mutation.mutationId, duplicate: false, workout: { ...workout(), version: 2, deletedAt: time } });
+      return Response.json({ mutationId: mutation.mutationId, duplicate: false, permanentlyDeleted: true, workout: { ...workout(), version: 2, deletedAt: time } });
     });
     try {
       expect(await syncAutomatically('legacy')).toMatchObject({ remaining: 0, failed: null });
-      expect(calls).toEqual(['replace', 'delete']);
+      expect(calls).toEqual(['delete']);
       expect(await listWorkoutMutations('legacy')).toEqual([]);
     } finally { vi.unstubAllGlobals(); }
   });
@@ -321,6 +321,58 @@ describe('delete intent recovers without making users inspect queues', () => {
     const completed = { ...workout('completed'), status: 'completed' as const, endedAt: time };
     await markLocalWorkoutDraftCompleted(completed);
     await deleteWorkoutRecord(completed.id);
+    await expect(restoreDeletedWorkout(completed.id)).rejects.toThrow('復元できません');
     expect(await getLocalWorkoutDraft(completed.id)).toMatchObject({ draftStatus: 'deleted', workout: { status: 'completed', endedAt: time } });
   });
+});
+
+it('完全削除ACK後は原本・メモ・後着の編集を残さず、最小の削除識別情報だけにする', async () => {
+  const original = await oldDelete();
+  await recoverLegacyWorkoutQueue();
+  await updateWorkoutMutation(original.mutationId, { syncStatus: 'blocked', lastError: 'old input' });
+  const before = await snapshot();
+  await reconcileDeletedWorkout('legacy', workout(), before);
+  const [mutation] = await listWorkoutMutations('legacy');
+  mutation.payload.permanentDelete = true;
+  await rawPut(WORKOUT_MUTATION_STORE_NAME, mutation);
+  await acknowledgeWorkoutMutation(mutation, { ...workout(), deletedAt: time, version: 2 });
+  const data = await exportWorkoutRecoveryData();
+  expect(data.recoveryArchive).toEqual([]);
+  expect(data.mutations).toEqual([]);
+  expect(await getLocalWorkoutDraft('legacy')).toMatchObject({ draftStatus: 'deleted', permanentDeletionConfirmed: true, workout: { name: '削除済み', exercises: [], overallNote: '' } });
+  await acknowledgeWorkoutMutation(original, workout());
+  expect((await getLocalWorkoutDraft('legacy'))?.draftStatus).toBe('deleted');
+});
+
+it('入力を修正した後は古い400が後続の保存を止めず、旧入力も原本として保護する', async () => {
+  const { recoverCorrectedWorkout } = await import('@/lib/workouts/input-recovery');
+  const base = workout();
+  await saveActiveWorkoutDraft(base, { serverUpdatedAt: time });
+  const { mutation } = await saveWorkoutDraftAndEnqueueMutation({ ...base, overallNote: '修正前' }, 'replace', { localUpdatedAt: time });
+  await updateWorkoutMutation(mutation.mutationId, { syncStatus: 'blocked', retryCount: 1, lastError: '入力不正（HTTP 400）' });
+  await saveWorkoutDraftAndEnqueueMutation({ ...base, overallNote: 'ユーザーの修正後' }, 'replace', { localUpdatedAt: '2026-10-16T00:00:00Z' });
+  expect(await recoverCorrectedWorkout(base.id, { fetcher: async () => Response.json({ workout: base }) })).toBe(true);
+  expect(await listWorkoutMutations(base.id)).toEqual([expect.objectContaining({ baseVersion: 1, syncStatus: 'pending', payload: { workout: expect.objectContaining({ overallNote: 'ユーザーの修正後' }) } })]);
+  expect((await exportWorkoutRecoveryData()).recoveryArchive).toContainEqual(expect.objectContaining({ reason: 'explicit-input-correction' }));
+});
+
+it('別端末が更新した後や、未修正の400を勝手に再作成しない', async () => {
+  const { recoverCorrectedWorkout } = await import('@/lib/workouts/input-recovery');
+  await saveActiveWorkoutDraft(workout());
+  const { mutation } = await saveWorkoutDraftAndEnqueueMutation(workout(), 'replace');
+  await updateWorkoutMutation(mutation.mutationId, { syncStatus: 'blocked', retryCount: 1, lastError: '入力不正（HTTP 400）' });
+  const fetcher = vi.fn(async () => Response.json({ workout: { ...workout(), version: 10 } }));
+  expect(await recoverCorrectedWorkout('legacy', { fetcher })).toBe(false);
+  expect(fetcher).not.toHaveBeenCalled();
+  await saveWorkoutDraftAndEnqueueMutation({ ...workout(), overallNote: '新しい修正' }, 'replace');
+  const before = await snapshot();
+  expect(await recoverCorrectedWorkout('legacy', { fetcher })).toBe(false);
+  expect(await snapshot()).toEqual(before);
+});
+
+it('別端末で完全削除済みなら古い更新を再送しても成功した削除状態へ収束する', async () => {
+  await saveWorkoutDraftAndEnqueueMutation(workout(), 'replace');
+  const result = await syncPendingWorkoutMutations('legacy', { fetcher: async () => Response.json({ code: 'WORKOUT_PERMANENTLY_DELETED', workout: { ...workout(), name: '削除済み', exercises: [], overallNote: '', deletedAt: time, version: 10 } }, { status: 410 }) });
+  expect(result).toMatchObject({ remaining: 0, failed: null });
+  expect(await getLocalWorkoutDraft('legacy')).toMatchObject({ draftStatus: 'deleted', permanentDeletionConfirmed: true });
 });

@@ -1,9 +1,8 @@
 'use client';
 
-import { DeletionSyncNotices } from './deletion-sync-notices';
 import { SwipeDeleteRow } from './swipe-delete-row';
-import { deleteActiveWorkout, restoreDeletedWorkout } from '@/lib/workouts/draft-deletion';
-import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
+import { deleteWorkoutRecord } from '@/lib/workouts/draft-deletion';
+import { syncAutomatically } from '@/lib/workouts/sync-timing';
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -14,6 +13,8 @@ import {
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { readLocalWorkoutSources } from '@/lib/workouts/local-drafts';
+import { mergeVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 import { loadVisibleWorkoutPage as loadVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 import type { WorkoutSummary } from '@/lib/workouts/types';
 import { workoutRoute } from '@/lib/routes';
@@ -44,7 +45,6 @@ export function WorkoutSummaryList({
   bodyPart?: string;
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState<{ id: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [items, setItems] = useState<WorkoutSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,6 +121,20 @@ export function WorkoutSummaryList({
       alive = false;
     };
   }, [status, localDate, from, to, exerciseName, bodyPart]);
+  useEffect(() => {
+    let alive = true;
+    let timer: number | undefined;
+    const update = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void readLocalWorkoutSources().then(local => {
+          if (alive) setItems(previous => mergeVisibleWorkouts(previous, local.drafts, local.mutations, status, { from: localDate ?? from, to: localDate ?? to, exerciseName, bodyPart }));
+        }).catch(() => undefined);
+      }, 100);
+    };
+    window.addEventListener('repwise-sync-queue-change', update);
+    return () => { alive = false; window.clearTimeout(timer); window.removeEventListener('repwise-sync-queue-change', update); };
+  }, [status, localDate, from, to, exerciseName, bodyPart]);
   const loadMore = async () => {
     if (loadingMore) return;
     setLoadingMore(true);
@@ -159,34 +173,20 @@ export function WorkoutSummaryList({
   };
   const remove = async (item: WorkoutSummary) => {
     if (deleting || loadingMore) return;
+    if (!window.confirm(`「${item.name}」を削除しますか？元に戻せません。`)) return;
     setDeleting(item.id); setDeleteError(null);
     try {
-      await deleteActiveWorkout(item.id);
+      await deleteWorkoutRecord(item.id);
       setItems(previous => previous.filter(row => row.id !== item.id));
       if (page > 0 && items.length - 1 <= page * pageSize) setPage(page - 1);
-      setDeleted({ id: item.id, name: item.name });
-      const result = await syncPendingWorkoutMutations(item.id, { manual: true }).catch(() => null);
+      const result = await syncAutomatically(item.id).catch(() => null);
       if (result && result.remaining === 0) load(page);
       else { setServerOffset(0); setHasMore(true); }
 
     } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : '削除を保存できませんでした'); }
     finally { setDeleting(null); }
   };
-  const undo = async (id: string) => {
-    if (deleting) return;
-    setDeleting(id); setDeleteError(null);
-    try {
-      await restoreDeletedWorkout(id);
-      setDeleted(null);
-      await syncPendingWorkoutMutations(id, { manual: true }).catch(() => undefined);
-      load(page);
-    } catch (cause) { setDeleteError(cause instanceof Error ? cause.message : '削除を取り消せませんでした'); }
-    finally { setDeleting(null); }
-  };
-  const deletionNotice = <>
-    {deleteError && <p role="alert" className="rounded-xl border border-destructive p-3 text-sm text-destructive">{deleteError}</p>}
-    <DeletionSyncNotices lastDeletedId={deleted?.id} disabled={deleting !== null || loadingMore} onUndo={id => void undo(id)} />
-  </>;
+  const deletionNotice = deleteError ? <p role="alert" className="rounded-xl border border-destructive p-3 text-sm text-destructive">{deleteError}</p> : null;
   if (loading)
     return (
       <div>{deletionNotice}<div className="grid min-h-44 place-items-center">
@@ -271,7 +271,7 @@ export function WorkoutSummaryList({
             </CardContent>
           </Card>
         );
-        return active ? <SwipeDeleteRow key={item.id} label={item.name} busy={deleting !== null || loadingMore} onDelete={() => void remove(item)}>{content}</SwipeDeleteRow> : <div key={item.id}>{content}</div>;
+        return <SwipeDeleteRow key={item.id} label={item.name} busy={deleting !== null || loadingMore} onDelete={() => void remove(item)}>{content}</SwipeDeleteRow>;
       })}
       {moreError && (
         <p role="alert" className="text-sm text-destructive">

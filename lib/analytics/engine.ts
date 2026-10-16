@@ -461,6 +461,17 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         maxWeightTrend,
         volumeTrend,
         repTrend,
+        // Retain eligible sets even when a higher-rep set at the same load is outside the RM range.
+        rmRepTrend: inRange.flatMap((item) =>
+          validSets(item.performance)
+            .filter((set) => (set.actualReps as number) <= E1RM_MAX_REPS)
+            .map((set) => ({
+              workoutId: item.performance.workoutId,
+              localDate: item.performance.workoutLocalDate,
+              loadGrams: effectiveLoadGrams(set) as number,
+              bestReps: set.actualReps as number,
+            })),
+        ),
         periodProgress: comparePeriodProgress(
           history.flatMap((item) =>
             validSets(item.performance).map((set) => ({

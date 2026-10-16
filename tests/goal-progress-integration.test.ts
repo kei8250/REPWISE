@@ -57,23 +57,21 @@ const data = {
   ],
 } as AnalyticsSnapshot;
 beforeEach(() =>
-  vi
-    .mocked(useGoalProgress)
-    .mockReturnValue({
-      goals: [goal],
-      data,
-      error: false,
-      storageError: false,
-      today: '2026-10-16',
-      retry: vi.fn(),
-    }),
+  vi.mocked(useGoalProgress).mockReturnValue({
+    goals: [goal],
+    data,
+    error: false,
+    storageError: false,
+    today: '2026-10-16',
+    retry: vi.fn(),
+  }),
 );
 describe('goal progress in home and recording', () => {
   it('home shows achieved percentage with a direct goal dashboard link', () => {
     const html = renderToStaticMarkup(createElement(HomeGoalProgress));
-    expect(html).toContain('33%');
+    expect(html).toContain('75%');
     expect(html).toContain('href="/goals"');
-    expect(html).toContain('あと20kg');
+    expect(html).toContain('現在 72kg ÷ 目標 96kg');
   });
   it('recording separates saved progress from unsaved completed sets', () => {
     const e = exercise();
@@ -91,8 +89,8 @@ describe('goal progress in home and recording', () => {
       }),
     );
     expect(html).toContain('保存済みの達成度');
-    expect(html).toContain('33%');
-    expect(html).toContain('今回の完了セットを含む見込み：100%');
+    expect(html).toContain('75%');
+    expect(html).toContain('今回の完了セットを含む見込み（RM換算）：100%');
     expect(html).toContain('ワークアウト保存前');
     expect(html).toContain('2026-10-31');
   });

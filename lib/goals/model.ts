@@ -1,6 +1,13 @@
-import type { RepTrendPoint } from '@/lib/analytics/model';
+import {
+  defaultRmMethod,
+  estimateRm,
+  equivalentRmLoad,
+  type RmMethod,
+} from './rm';
+import type { ExerciseAnalytics, RepTrendPoint } from '@/lib/analytics/model';
 
 export interface TrainingGoal {
+  rmMethod?: RmMethod;
   id: string;
   exerciseId: string;
   exerciseName: string;
@@ -79,6 +86,12 @@ export function validateGoal(goal: TrainingGoal) {
       '目標重量は開始重量より大きく2,000kg以下、回数は1〜100回、増量幅は0より大きく100kg以下で指定してください',
     );
   if (
+    goal.rmMethod !== undefined &&
+    goal.rmMethod !== 'bench' &&
+    goal.rmMethod !== 'squat_deadlift'
+  )
+    throw new Error('RM換算方式が正しくありません');
+  if (
     !['active', 'paused', 'archived'].includes(goal.status) ||
     typeof goal.note !== 'string' ||
     goal.note.length > 500
@@ -105,7 +118,8 @@ export function bestGoalPerformance(
           b.loadGrams - a.loadGrams ||
           b.localDate.localeCompare(a.localDate) ||
           b.bestReps - a.bestReps,
-      )[0] ?? null
+      )
+      .at(0) ?? null
   );
 }
 export function goalProgress(
@@ -113,13 +127,40 @@ export function goalProgress(
   points: RepTrendPoint[],
   today: string,
 ) {
-  const actual = bestGoalPerformance(
+  const method = goal.rmMethod ?? defaultRmMethod(goal.exerciseName);
+  const targetRmGrams = estimateRm(
+    goal.targetLoadGrams,
+    goal.targetReps,
+    method,
+  );
+  const candidates = points
+    .filter((p) => p.localDate >= goal.startDate && p.localDate <= today)
+    .map((point) => ({
+      point,
+      rm: estimateRm(point.loadGrams, point.bestReps, method),
+    }))
+    .filter(
+      (item): item is { point: RepTrendPoint; rm: number } => item.rm !== null,
+    )
+    .sort(
+      (a, b) =>
+        b.rm - a.rm || b.point.localDate.localeCompare(a.point.localDate),
+    );
+  const best = candidates.at(0);
+  const actual = best?.point ?? null;
+  const currentRmGrams = best?.rm ?? null;
+  const directActual = bestGoalPerformance(
     points,
     goal.targetReps,
     today,
     goal.startDate,
   );
-  const current = actual?.loadGrams ?? goal.startLoadGrams;
+  const current =
+    currentRmGrams && targetRmGrams
+      ? equivalentRmLoad(currentRmGrams, goal.targetReps, method)!
+      : goal.startLoadGrams;
+  const ratio =
+    currentRmGrams && targetRmGrams ? currentRmGrams / targetRmGrams : null;
   const span = date(goal.deadline).getTime() - date(goal.startDate).getTime();
   const plannedAt = (at: string) => {
     const fraction = Math.max(
@@ -163,18 +204,14 @@ export function goalProgress(
   return {
     actual,
     currentLoadGrams: current,
-    percent: Math.round(
-      Math.max(
-        0,
-        Math.min(
-          100,
-          ((current - goal.startLoadGrams) /
-            (goal.targetLoadGrams - goal.startLoadGrams)) *
-            100,
-        ),
-      ),
-    ),
-    achieved: !!actual && actual.loadGrams >= goal.targetLoadGrams,
+    method,
+    currentRmGrams,
+    targetRmGrams,
+    directActual,
+    percent: ratio === null ? null : Math.round(ratio * 1000) / 10,
+    barPercent: ratio === null ? 0 : Math.min(100, Math.max(0, ratio * 100)),
+    estimatedReached: ratio !== null && ratio >= 1,
+    achieved: !!directActual && directActual.loadGrams >= goal.targetLoadGrams,
     overdue: today > goal.deadline,
     remainingGrams: Math.max(0, goal.targetLoadGrams - current),
     daysLeft: Math.max(
@@ -186,4 +223,10 @@ export function goalProgress(
     monthlyIncreaseGrams: Math.max(0, milestone.loadGrams - current),
     plannedTodayGrams: plannedAt(today),
   };
+}
+
+export function goalPerformancePoints(
+  exercise: Pick<ExerciseAnalytics, 'repTrend' | 'rmRepTrend'> | undefined,
+): RepTrendPoint[] {
+  return exercise ? [...exercise.repTrend, ...(exercise.rmRepTrend ?? [])] : [];
 }

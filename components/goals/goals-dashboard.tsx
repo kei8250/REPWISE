@@ -9,6 +9,7 @@ import {
   addMonths,
   bestGoalPerformance,
   goalProgress,
+  goalPerformancePoints,
   localToday,
   type TrainingGoal,
   validateGoal,
@@ -20,6 +21,8 @@ import {
   serializeGoals,
   mergeGoals,
 } from '@/lib/goals/storage';
+import { RmProgressEvidence } from './rm-progress-evidence';
+import { defaultRmMethod, RM_METHODS, type RmMethod } from '@/lib/goals/rm';
 import { Card, CardContent } from '@/components/ui/card';
 
 const field =
@@ -260,9 +263,9 @@ export function GoalsDashboard() {
       {visible
         .sort((a, b) => a.deadline.localeCompare(b.deadline))
         .map((goal) => {
-          const points =
-            data?.exercises.find((e) => e.exerciseId === goal.exerciseId)
-              ?.repTrend ?? [];
+          const points = goalPerformancePoints(
+            data?.exercises.find((e) => e.exerciseId === goal.exerciseId),
+          );
           const progress =
             data && !loadError ? goalProgress(goal, points, today) : null;
           const state =
@@ -298,24 +301,36 @@ export function GoalsDashboard() {
                   <>
                     <div>
                       <div className="flex justify-between gap-2 text-sm">
-                        <span>目標までの進捗</span>
-                        <strong>{progress.percent}%</strong>
+                        <span>目標達成度（RM換算）</span>
+                        <strong>
+                          {progress.percent === null
+                            ? '換算データなし'
+                            : `${progress.percent}%`}
+                        </strong>
                       </div>
                       <progress
                         aria-label={`${goal.exerciseName}の目標進捗`}
-                        value={progress.percent}
+                        aria-valuetext={
+                          progress.percent === null
+                            ? '換算データなし'
+                            : `${progress.percent}%（RM換算）`
+                        }
+                        value={progress.barPercent}
                         max={100}
                         className="mt-2 h-3 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
                       />
                     </div>
+                    <RmProgressEvidence progress={progress} />
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="rounded-2xl bg-muted/50 p-4">
                         <p className="text-xs text-muted-foreground">
-                          開始時 → 現在の最高重量（{goal.targetReps}回以上）
+                          開始値 → 目標{goal.targetReps}回への換算重量（推定）
                         </p>
                         <p className="mt-1 font-black">
                           {kg(goal.startLoadGrams)} →{' '}
-                          {kg(progress.currentLoadGrams)}
+                          {progress.percent === null
+                            ? '換算なし'
+                            : kg(progress.currentLoadGrams)}
                         </p>
                         <p className="mt-2 text-xs text-muted-foreground">
                           {progress.actual
@@ -327,11 +342,13 @@ export function GoalsDashboard() {
                         <p className="text-xs text-muted-foreground">
                           {progress.achieved
                             ? '達成おめでとうございます！'
-                            : `目標まであと${kg(progress.remainingGrams)}`}
+                            : progress.percent === null
+                              ? 'RM換算実績なし'
+                              : `目標回数への換算であと${kg(progress.remainingGrams)}（推定）`}
                         </p>
                         <p className="mt-1 font-black">
                           {progress.achieved
-                            ? `${kg(goal.targetLoadGrams)}で${goal.targetReps}回以上を達成`
+                            ? `${kg(goal.targetLoadGrams)}で${goal.targetReps}回以上を実測で達成`
                             : `残り${progress.daysLeft}日`}
                         </p>
                       </div>
@@ -350,9 +367,11 @@ export function GoalsDashboard() {
                         <p className="mt-2 text-sm text-muted-foreground">
                           {progress.overdue
                             ? '期限を延ばす・重量を調整するなど、無理のない計画に編集できます。'
-                            : progress.monthlyIncreaseGrams > 0
-                              ? `今の実績からあと${kg(progress.monthlyIncreaseGrams)}が今月の計画上の目安です。`
-                              : '今月の重量目安に届いています。この調子で積み重ねましょう。'}
+                            : progress.percent === null
+                              ? '換算実績がないため、開始値からの計画です。'
+                              : progress.monthlyIncreaseGrams > 0
+                                ? `目標回数への換算重量からあと${kg(progress.monthlyIncreaseGrams)}（推定）が今月の計画上の目安です。`
+                                : '今月の重量目安に届いています。この調子で積み重ねましょう。'}
                         </p>
                       </div>
                     )}
@@ -442,7 +461,7 @@ export function GoalsDashboard() {
           );
         })}
       <p className="text-xs leading-relaxed text-muted-foreground">
-        達成判定は開始日以降の完了済みセットから、目標回数以上できた重量で確認します。削除した記録やウォームアップは含みません。左右別種目は片側の重量・左右の少ない方の回数で比較します。
+        RM換算達成率は開始日以降の完了済みセットの推定1RMを、目標重量・目標回数の推定1RMで割って計算します。実測達成は目標重量と目標回数を両方満たした記録で別判定します。削除した記録やウォームアップは含みません。左右別種目は片側の重量・左右の少ない方の回数で比較します。
       </p>
     </div>
   );
@@ -499,6 +518,14 @@ function GoalForm({
         ) ?? null)
       : 3,
   );
+  const [rmMethod, setRmMethod] = useState<RmMethod>(
+    goal?.rmMethod ??
+      defaultRmMethod(
+        goal?.exerciseName ??
+          exercises.find((e) => e.id === exerciseId)?.name ??
+          '',
+      ),
+  );
   const [note, setNote] = useState(goal?.note ?? '');
   const [formError, setFormError] = useState('');
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
@@ -521,6 +548,7 @@ function GoalForm({
       targetReps: Number(reps),
       incrementGrams: grams(increment),
       status: goal?.status ?? 'active',
+      rmMethod,
       note,
       updatedAt: new Date().toISOString(),
     };
@@ -560,6 +588,12 @@ function GoalForm({
                 required
                 onChange={(e) => {
                   setExerciseId(e.target.value);
+                  setRmMethod(
+                    defaultRmMethod(
+                      exercises.find((master) => master.id === e.target.value)
+                        ?.name ?? '',
+                    ),
+                  );
                   const baseline =
                     best(e.target.value, Number(reps))?.loadGrams ?? 0;
                   setStart(String(baseline / 1000));
@@ -575,6 +609,23 @@ function GoalForm({
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="block text-sm font-bold">
+              RM換算方式
+              <select
+                className={field}
+                value={rmMethod}
+                onChange={(e) => setRmMethod(e.target.value as RmMethod)}
+              >
+                {(Object.keys(RM_METHODS) as RmMethod[]).map((method) => (
+                  <option key={method} value={method}>
+                    {RM_METHODS[method].label}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                ベンチは係数40、スクワット・デッドリフトは33.3の簡易式。目標の重量・回数も同じ式で推定1RMに換算します。換算対象は1〜12回。他種目は参考値です。
+              </span>
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-sm font-bold">

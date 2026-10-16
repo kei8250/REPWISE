@@ -65,10 +65,10 @@ describe('training goals and calendar planning', () => {
       ],
       '2026-10-16',
     );
-    expect(progress.currentLoadGrams).toBe(60000);
-    expect(progress.percent).toBe(33);
+    expect(progress.currentLoadGrams).toBeCloseTo(80000 / 1.2);
+    expect(progress.percent).toBe(83.3);
     expect(progress.achieved).toBe(false);
-    expect(progress.remainingGrams).toBe(20000);
+    expect(progress.remainingGrams).toBeCloseTo(80000 - 80000 / 1.2);
     expect(goalProgress(goal, [point(80000, 8)], '2026-10-16').achieved).toBe(
       true,
     );
@@ -76,7 +76,7 @@ describe('training goals and calendar planning', () => {
   it('shows baseline when unrecorded, never declares manual baseline achievement', () => {
     const result = goalProgress(goal, [], '2026-10-16');
     expect(result.actual).toBeNull();
-    expect(result.percent).toBe(0);
+    expect(result.percent).toBeNull();
     expect(result.currentLoadGrams).toBe(50000);
     expect(result.achieved).toBe(false);
   });
@@ -98,7 +98,7 @@ describe('training goals and calendar planning', () => {
     expect(late.overdue).toBe(true);
     expect(late.daysLeft).toBe(0);
     expect(goalProgress(goal, [point(100000, 8)], '2026-10-16').percent).toBe(
-      100,
+      125,
     );
     const monthEnd = goalProgress(
       { ...goal, startDate: '2026-10-31', deadline: '2027-01-31' },

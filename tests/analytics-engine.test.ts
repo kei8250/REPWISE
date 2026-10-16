@@ -524,3 +524,24 @@ it('builds period comparisons from valid completed sets before the visible windo
     baseline: 'before_period',
   });
 });
+
+it('keeps RM-eligible sets when the best rep count at the same weight exceeds the estimation range', () => {
+  const result = analytics([
+    history('rm-session', '2026-09-30', 60000, 13, {
+      sets: [
+        set('eight', 60000, 8),
+        set('thirteen', 60000, 13),
+        set('deleted', 90000, 10, { deletedAt: '2026-09-30' }),
+      ],
+    }),
+  ]);
+  expect(result.exercises[0].repTrend[0].bestReps).toBe(13);
+  expect(result.exercises[0].rmRepTrend).toEqual([
+    {
+      workoutId: 'rm-session',
+      localDate: '2026-09-30',
+      loadGrams: 60000,
+      bestReps: 8,
+    },
+  ]);
+});

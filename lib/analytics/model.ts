@@ -95,6 +95,7 @@ export interface ExerciseAnalytics {
   maxWeightTrend: ExerciseTrendPoint[];
   volumeTrend: ExerciseTrendPoint[];
   repTrend: RepTrendPoint[];
+  rmRepTrend?: RepTrendPoint[];
   periodProgress?: PeriodProgress | null;
   personalRecordHistory: PersonalRecordHistoryEvent[];
   acceptedTargetHistory: AcceptedTargetAnalytics[];

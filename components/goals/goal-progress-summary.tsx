@@ -1,7 +1,11 @@
 'use client';
 
+import { RmConversionButton } from '@/components/workouts/rm-conversion-dialog';
+import { RmProgressEvidence } from './rm-progress-evidence';
+
 import { useGoalProgress } from '@/hooks/use-goal-progress';
-import { goalProgress } from '@/lib/goals/model';
+import { defaultRmMethod } from '@/lib/goals/rm';
+import { goalProgress, goalPerformancePoints } from '@/lib/goals/model';
 import { APP_ROUTES } from '@/lib/routes';
 import { formatKilograms } from '@/lib/analytics/detail-view';
 import { effectiveLoadGrams, effectiveReps } from '@/lib/workouts/reps';
@@ -44,9 +48,11 @@ export function HomeGoalProgress() {
               const progress = state.data
                 ? goalProgress(
                     goal,
-                    state.data.exercises.find(
-                      (e) => e.exerciseId === goal.exerciseId,
-                    )?.repTrend ?? [],
+                    goalPerformancePoints(
+                      state.data.exercises.find(
+                        (e) => e.exerciseId === goal.exerciseId,
+                      ),
+                    ),
                     state.today,
                   )
                 : null;
@@ -64,7 +70,9 @@ export function HomeGoalProgress() {
                         : progress?.achieved
                           ? '目標達成！'
                           : progress
-                            ? `${progress.percent}%`
+                            ? progress.percent === null
+                              ? '換算データなし'
+                              : `${progress.percent}%（RM換算）`
                             : '実績を確認中…'}
                     </span>
                   </div>
@@ -77,15 +85,15 @@ export function HomeGoalProgress() {
                       <progress
                         className="h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
                         aria-label={`${goal.exerciseName}の目標達成度`}
-                        value={progress.percent}
+                        aria-valuetext={
+                          progress.percent === null
+                            ? '換算データなし'
+                            : `${progress.percent}%（RM換算）`
+                        }
+                        value={progress.barPercent}
                         max={100}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        {progress.actual
-                          ? `現在 ${kg(progress.currentLoadGrams)} × ${progress.actual.bestReps}回`
-                          : `開始値 ${kg(progress.currentLoadGrams)}（開始後の実績なし）`}{' '}
-                        · あと{kg(progress.remainingGrams)}
-                      </p>
+                      <RmProgressEvidence progress={progress} />
                     </>
                   )}
                 </a>
@@ -129,15 +137,17 @@ export function WorkoutGoalProgress({
   const goal = state.goals[0];
   if (state.storageError)
     return (
-      <p className="text-xs text-muted-foreground">
-        長期目標を読み込めません。目標設定で保存状態を確認してください。
-      </p>
+      <>
+        <RmConversionButton exercise={exercise} />
+        <p className="text-xs text-muted-foreground">
+          長期目標を読み込めません。目標設定で保存状態を確認してください。
+        </p>
+      </>
     );
-  if (!goal) return null;
-  const points =
-    state.data?.exercises
-      .find((e) => e.exerciseId === exercise.exerciseId)
-      ?.repTrend.filter((p) => p.workoutId !== workoutId) ?? [];
+  if (!goal) return <RmConversionButton exercise={exercise} />;
+  const points = goalPerformancePoints(
+    state.data?.exercises.find((e) => e.exerciseId === exercise.exerciseId),
+  ).filter((p) => p.workoutId !== workoutId);
   const progress = state.data ? goalProgress(goal, points, state.today) : null;
   const draftPoints = exercise.sets
     .filter(
@@ -158,61 +168,88 @@ export function WorkoutGoalProgress({
       ? goalProgress(goal, [...points, ...draftPoints], state.today)
       : null;
   return (
-    <section
-      className="space-y-3 rounded-2xl border border-primary/20 bg-primary/5 p-4"
-      aria-label="この種目の長期目標"
-    >
-      <div className="flex flex-wrap justify-between gap-2">
-        <h3 className="text-sm font-black">
-          長期目標 {kg(goal.targetLoadGrams)} × {goal.targetReps}回
-        </h3>
-        <a className="text-sm font-bold text-primary" href={APP_ROUTES.goals}>
-          目標設定
-        </a>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {goal.deadline}まで{goal.status === 'paused' ? ' · 一時停止中' : ''}
-      </p>
-      {progress ? (
-        <>
-          <p className="text-sm">
-            保存済みの達成度 <strong>{progress.percent}%</strong> · あと
-            {kg(progress.remainingGrams)}
-          </p>
-          <progress
-            className="h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
-            aria-label="保存済みの目標進捗"
-            value={progress.percent}
-            max={100}
-          />
-          {goal.status === 'active' && !progress.achieved && (
-            <p className="text-sm">
-              {progress.overdue
-                ? '期限を迎えています。目標設定で計画を見直せます。'
-                : `${progress.milestone.date}までに ${kg(progress.milestone.loadGrams)} × ${goal.targetReps}回が目安。今の実績からあと${kg(progress.monthlyIncreaseGrams)}。`}
-            </p>
-          )}
-          {preview && (
-            <output className="block text-sm font-bold text-primary">
-              今回の完了セットを含む見込み：{preview.percent}%
-              {preview.achieved ? ' · 目標条件を達成！' : ''}
-              （ワークアウト保存前）
-            </output>
-          )}
-          <p className="text-xs text-muted-foreground">
-            月末の重量は計画上の目安です。無理に増量せず、フォームや体調に合わせて調整してください。
-          </p>
-        </>
-      ) : state.error ? (
-        <p role="alert" className="text-sm">
-          進捗を取得できませんでした。
-          <button onClick={state.retry} className="min-h-11 px-2 font-bold">
-            再取得
-          </button>
+    <>
+      <RmConversionButton
+        exercise={exercise}
+        initialMethod={
+          progress?.method ??
+          goal.rmMethod ??
+          defaultRmMethod(goal.exerciseName)
+        }
+      />
+      <section
+        className="space-y-3 rounded-2xl border border-primary/20 bg-primary/5 p-4"
+        aria-label="この種目の長期目標"
+      >
+        <div className="flex flex-wrap justify-between gap-2">
+          <h3 className="text-sm font-black">
+            長期目標 {kg(goal.targetLoadGrams)} × {goal.targetReps}回
+          </h3>
+          <a className="text-sm font-bold text-primary" href={APP_ROUTES.goals}>
+            目標設定
+          </a>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {goal.deadline}まで{goal.status === 'paused' ? ' · 一時停止中' : ''}
         </p>
-      ) : (
-        <p className="text-sm">目標への進捗を確認中…</p>
-      )}
-    </section>
+        {progress ? (
+          <>
+            <p className="text-sm">
+              保存済みの達成度（RM換算）{' '}
+              <strong>
+                {progress.percent === null
+                  ? '換算データなし'
+                  : `${progress.percent}%`}
+              </strong>
+            </p>
+            <progress
+              className="h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
+              aria-label="保存済みの目標進捗"
+              aria-valuetext={
+                progress.percent === null
+                  ? '換算データなし'
+                  : `${progress.percent}%（RM換算）`
+              }
+              value={progress.barPercent}
+              max={100}
+            />
+            <RmProgressEvidence progress={progress} />
+            {goal.status === 'active' && !progress.achieved && (
+              <p className="text-sm">
+                {progress.overdue
+                  ? '期限を迎えています。目標設定で計画を見直せます。'
+                  : `${progress.milestone.date}までに ${kg(progress.milestone.loadGrams)} × ${goal.targetReps}回が目安。${progress.percent === null ? '換算実績がないため、開始値からの計画です。' : `目標回数への換算重量からあと${kg(progress.monthlyIncreaseGrams)}（推定）。`}`}
+              </p>
+            )}
+            {preview && (
+              <output className="block text-sm font-bold text-primary">
+                今回の完了セットを含む見込み（RM換算）：
+                {preview.percent === null
+                  ? '換算対象外'
+                  : `${preview.percent}%`}
+                {preview.achieved
+                  ? ' · 実測で目標条件を達成！'
+                  : preview.estimatedReached
+                    ? ' · 換算目安に到達'
+                    : ''}
+                （ワークアウト保存前）
+              </output>
+            )}
+            <p className="text-xs text-muted-foreground">
+              月末の重量は計画上の目安です。無理に増量せず、フォームや体調に合わせて調整してください。
+            </p>
+          </>
+        ) : state.error ? (
+          <p role="alert" className="text-sm">
+            進捗を取得できませんでした。
+            <button onClick={state.retry} className="min-h-11 px-2 font-bold">
+              再取得
+            </button>
+          </p>
+        ) : (
+          <p className="text-sm">目標への進捗を確認中…</p>
+        )}
+      </section>
+    </>
   );
 }

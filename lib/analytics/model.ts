@@ -95,6 +95,7 @@ export interface ExerciseAnalytics {
   maxWeightTrend: ExerciseTrendPoint[];
   volumeTrend: ExerciseTrendPoint[];
   repTrend: RepTrendPoint[];
+  periodProgress?: PeriodProgress | null;
   personalRecordHistory: PersonalRecordHistoryEvent[];
   acceptedTargetHistory: AcceptedTargetAnalytics[];
   currentAcceptedTarget: AcceptedTargetAnalytics | null;
@@ -116,4 +117,10 @@ export interface AnalyticsSnapshot {
   workouts: WorkoutAnalytics;
   exercises: ExerciseAnalytics[];
   bodyParts: BodyPartAnalytics[];
+}
+
+export interface PeriodProgress {
+  before: RepTrendPoint;
+  after: RepTrendPoint;
+  baseline: 'before_period' | 'first_in_period';
 }

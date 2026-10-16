@@ -1,3 +1,5 @@
+import { filterAnalyticsExercises } from './detail-view';
+import { periodProgressText } from './period-progress';
 import type { AnalyticsSnapshot, AnalyticsPeriod } from './model';
 import { stagnationReasonLabel } from '@/lib/progression/stagnation';
 
@@ -16,6 +18,7 @@ export const INSIGHT_RULES = {
 } as const;
 
 export type InsightType =
+  | 'period_progress'
   | 'progressing'
   | 'stagnation'
   | 'accepted_target'
@@ -29,6 +32,7 @@ export interface AnalyticsInsight {
   priority: 'high' | 'medium' | 'low';
   title: string;
   message: string;
+  achievement?: boolean;
   exerciseId?: string;
   exerciseName?: string;
   bodyParts?: string[];
@@ -116,6 +120,21 @@ export function buildAnalyticsInsights(
       exerciseId: exercise.exerciseId,
       exerciseName: exercise.exerciseName,
     };
+    if (exercise.periodProgress) {
+      const progress = exercise.periodProgress;
+      const text = periodProgressText(progress, analytics.period);
+      items.push({
+        id: `progress:${exercise.exerciseId}`,
+        type: 'period_progress',
+        priority: 'medium',
+        achievement: text.improved,
+        title: `${exercise.exerciseName}：${text.change}`,
+        message: `${text.label}（各日の最も重いセット）。${progress.before.localDate} ${text.before} → ${progress.after.localDate} ${text.after}`,
+        ...identity,
+        bodyParts: [exercise.bodyPart],
+        supportingData: { period: analytics.period, values: [] },
+      });
+    }
     const recent = exercise.maxWeightTrend.some(
       (p) =>
         p.localDate >= recentStart && p.localDate <= analytics.period.endDate,
@@ -255,7 +274,7 @@ export function buildAnalyticsInsights(
         id: `pr:${exercise.exerciseId}`,
         type: 'recent_pr',
         priority: 'medium',
-        title: `${exercise.exerciseName}でPRを更新しました`,
+        title: `${exercise.exerciseName}で${grouped.some((p) => p.type === 'weight') ? '自己最高重量を更新！' : '自己ベストを更新！'}`,
         message: `${[...new Set(grouped.map((p) => names[p.type]))].join('・')} PR（${latest.localDate}）`,
         ...identity,
         supportingData: {
@@ -372,5 +391,40 @@ export function buildAnalyticsInsights(
         ? 'insufficient_data'
         : 'no_insight',
     items: deduped,
+  };
+}
+
+// Show one point per exercise, filtered by the selected body part before limiting.
+export function getDetailHighlights(
+  analytics: AnalyticsSnapshot,
+  bodyPart = 'all',
+) {
+  const source = analytics.insights ?? buildAnalyticsInsights(analytics);
+  const ids = new Set(
+    filterAnalyticsExercises(analytics.exercises, bodyPart).map(
+      (e) => e.exerciseId,
+    ),
+  );
+  const items = source.items.filter(
+    (item) =>
+      bodyPart === 'all' ||
+      (item.exerciseId
+        ? ids.has(item.exerciseId)
+        : item.bodyParts?.includes(bodyPart)),
+  );
+  const ordered = [...items].sort(
+    (a, b) =>
+      Number(b.type === 'period_progress') -
+      Number(a.type === 'period_progress'),
+  );
+  const seen = new Set<string>();
+  return {
+    ...source,
+    items: ordered.filter((item) => {
+      const key = item.exerciseId ?? item.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
   };
 }

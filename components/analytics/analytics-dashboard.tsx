@@ -14,9 +14,10 @@ import {
   Trophy,
   TrendingUp,
 } from 'lucide-react';
+import { periodProgressText } from '@/lib/analytics/period-progress';
 import { TrendChart } from './trend-chart';
 import { InsightsSection } from './insights-section';
-import { getInsightsForView } from '@/lib/analytics/insights';
+import { getDetailHighlights } from '@/lib/analytics/insights';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   NativeSelect,
@@ -155,6 +156,52 @@ function acceptedTargetText(exercise: ExerciseAnalytics) {
   return `${formatKilograms(target.targetLoadGrams)} / ${target.targetRepMin}〜${target.targetRepMax}回 × ${target.targetWorkingSets}`;
 }
 
+function ExercisePeriodProgress({
+  exercise,
+  period,
+}: {
+  exercise: ExerciseAnalytics;
+  period: AnalyticsSnapshot['period'];
+}) {
+  const progress = exercise.periodProgress;
+  if (!progress)
+    return (
+      <p className="mt-5 rounded-2xl bg-muted/45 p-4 text-sm text-muted-foreground">
+        比較できる別の日の記録がまだありません。記録が増えると、重量と回数の変化を表示します。
+      </p>
+    );
+  const text = periodProgressText(progress, period);
+  return (
+    <div
+      className={`mt-5 rounded-2xl border p-4 ${text.improved ? 'border-emerald-500/25 bg-emerald-500/5' : 'bg-muted/45'}`}
+    >
+      <p className="text-xs font-bold text-muted-foreground">{text.label}</p>
+      <p className="mt-2 text-base font-black">{text.change}</p>
+      <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div>
+          <time className="text-xs text-muted-foreground">
+            {progress.before.localDate}
+          </time>
+          <p className="mt-1 text-lg font-black">{text.before}</p>
+        </div>
+        <span aria-label="から">→</span>
+        <div>
+          <time className="text-xs text-muted-foreground">
+            {progress.after.localDate}
+          </time>
+          <p className="mt-1 text-lg font-black">{text.after}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        各日の最も重いセットを比較。同じ重量では最多回数を表示します。
+        {progress.baseline === 'before_period'
+          ? '基準日以前の直近の記録を使用しています。'
+          : '基準日以前の記録がないため、期間内で比較しています。'}
+      </p>
+    </div>
+  );
+}
+
 function progressionTone(status: ExerciseAnalytics['progression']['status']) {
   if (status === 'increase_load') return 'bg-emerald-100 text-emerald-800';
   if (status === 'keep_load' || status === 'set_specific') return 'bg-blue-100 text-blue-800';
@@ -205,10 +252,15 @@ export function AnalyticsDataView({
 
   return (
     <div className="space-y-5">
-      <InsightsSection
-        summary={getInsightsForView(analytics, 'detail')}
-        detailed
-      />
+      <div className="space-y-3">
+        <label className="block text-sm font-bold">
+          <span className="mb-2 block">部位別に見る</span>
+          <NativeSelect aria-label="ポイントの部位" value={effectiveBodyPart} onChange={event => chooseBodyPart(event.target.value)}>
+            {[ALL_BODY_PARTS, ...bodyParts].map(part => <NativeSelectOption key={part} value={part}>{part === ALL_BODY_PARTS ? 'すべての部位' : part}</NativeSelectOption>)}
+          </NativeSelect>
+        </label>
+        <InsightsSection key={`${analytics.period.range}:${effectiveBodyPart}`} summary={getDetailHighlights(analytics, effectiveBodyPart)} compact />
+      </div>
       <section aria-labelledby="period-summary-title">
         <div className="mb-3 flex items-end justify-between gap-3">
           <h2 id="period-summary-title" className="text-lg font-black">
@@ -320,6 +372,7 @@ export function AnalyticsDataView({
                   </div>
                 </div>
 
+                <ExercisePeriodProgress exercise={selectedExercise} period={analytics.period} />
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   <div className="rounded-2xl bg-muted/45 p-4">
                     <p className="text-xs font-bold text-muted-foreground">

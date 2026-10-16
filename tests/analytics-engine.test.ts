@@ -499,3 +499,28 @@ describe('Phase 4A analytics engine', () => {
     expect((await getAnalytics('90d', fetcher)).period.range).toBe('90d');
   });
 });
+
+it('builds period comparisons from valid completed sets before the visible window', () => {
+  const result = analytics(
+    [
+      history('base', '2026-09-23', 50000, 8),
+      history('deleted', '2026-09-23', 90000, 8, {
+        workoutDeletedAt: '2026-09-24',
+      }),
+      history('now', '2026-09-30', 52500, 10, {
+        sets: [
+          set('heavy', 52500, 10),
+          set('warmup', 90000, 20, { setType: 'warmup' }),
+          set('deleted-set', 100000, 8, { deletedAt: '2026-09-30' }),
+        ],
+      }),
+    ],
+    { range: '7d' },
+  );
+  expect(result.exercises[0].maxWeightTrend).toHaveLength(1);
+  expect(result.exercises[0].periodProgress).toMatchObject({
+    before: { loadGrams: 50000, bestReps: 8 },
+    after: { loadGrams: 52500, bestReps: 10 },
+    baseline: 'before_period',
+  });
+});

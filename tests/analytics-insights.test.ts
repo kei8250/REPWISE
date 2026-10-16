@@ -5,6 +5,7 @@ import {
   buildAnalyticsInsights,
   buildFrequencyComparison,
   getInsightsForView,
+  getDetailHighlights,
 } from '@/lib/analytics/insights';
 import type {
   AnalyticsSnapshot,
@@ -326,5 +327,55 @@ describe('Phase 4D insight engine', () => {
         }),
       ),
     ).toContain('133.3kg');
+  });
+});
+
+describe('compact detailed highlights', () => {
+  it('deduplicates an exercise and prioritizes the concrete period comparison', () => {
+    const data = snapshot([
+      exercise({
+        currentAcceptedTarget: target(),
+        periodProgress: {
+          before: {
+            workoutId: 'old',
+            localDate: '2026-08-31',
+            loadGrams: 100000,
+            bestReps: 8,
+          },
+          after: {
+            workoutId: 'new',
+            localDate: '2026-09-28',
+            loadGrams: 102500,
+            bestReps: 8,
+          },
+          baseline: 'before_period',
+        },
+      }),
+    ]);
+    const highlights = getDetailHighlights(data);
+    expect(highlights.items).toHaveLength(1);
+    expect(highlights.items[0].type).toBe('period_progress');
+    expect(highlights.items[0].message).toContain(
+      '100kg × 8回 → 2026-09-28 102.5kg × 8回',
+    );
+    expect(getDetailHighlights(data, '脚').items).toHaveLength(0);
+    expect(getDetailHighlights(data, '胸').items).toHaveLength(1);
+  });
+  it('shows three points by default with an accessible way to expand', () => {
+    const data = snapshot(
+      Array.from({ length: 5 }, (_, i) =>
+        exercise({ exerciseId: `e${i}`, exerciseName: `種目${i}` }),
+      ),
+    );
+    const html = renderToStaticMarkup(
+      createElement(InsightsSection, {
+        summary: getDetailHighlights(data),
+        compact: true,
+      }),
+    );
+    expect(html).toContain('もっと見る（全5件）');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('種目2');
+    expect(html).not.toContain('種目3');
   });
 });

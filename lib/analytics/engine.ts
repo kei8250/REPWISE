@@ -1,3 +1,4 @@
+import { comparePeriodProgress } from './period-progress';
 import { totalReps, effectiveLoadGrams } from '@/lib/workouts/reps';
 import {
   evaluateProgression,
@@ -385,8 +386,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         localDate: item.performance.workoutLocalDate,
         value: validSets(item.performance).reduce(
           (total, set) =>
-            total +
-            (set.actualLoadGrams as number) * totalReps(set),
+            total + (set.actualLoadGrams as number) * totalReps(set),
           0,
         ),
       }));
@@ -451,8 +451,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         workingSetCount: sets.length,
         totalVolumeGramReps: sets.reduce(
           (total, set) =>
-            total +
-            (set.actualLoadGrams as number) * totalReps(set),
+            total + (set.actualLoadGrams as number) * totalReps(set),
           0,
         ),
         profile: latest.profile,
@@ -462,6 +461,17 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
         maxWeightTrend,
         volumeTrend,
         repTrend,
+        periodProgress: comparePeriodProgress(
+          history.flatMap((item) =>
+            validSets(item.performance).map((set) => ({
+              workoutId: item.performance.workoutId,
+              localDate: item.performance.workoutLocalDate,
+              loadGrams: effectiveLoadGrams(set) as number,
+              bestReps: set.actualReps as number,
+            })),
+          ),
+          period,
+        ),
         personalRecordHistory: personalRecordHistory(history, period),
         acceptedTargetHistory: acceptedTargetHistory(
           exerciseId,
@@ -507,8 +517,7 @@ export function buildAnalytics(input: BuildAnalyticsInput): AnalyticsSnapshot {
     aggregate.trainingDays.add(item.performance.workoutLocalDate);
     aggregate.workingSetCount += sets.length;
     aggregate.totalVolumeGramReps += sets.reduce(
-      (total, set) =>
-        total + (set.actualLoadGrams as number) * totalReps(set),
+      (total, set) => total + (set.actualLoadGrams as number) * totalReps(set),
       0,
     );
     bodyPartMap.set(bodyPart, aggregate);

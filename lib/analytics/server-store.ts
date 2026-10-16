@@ -85,7 +85,9 @@ function masterFromRow(row: PerformanceRow): ExerciseMaster {
     normalizedName: row.normalized_name,
     bodyPart: row.body_part ?? '',
     measurementType: 'weight_reps',
-    ...(row.master_load_basis === 'paired_total' ? { loadBasis: 'paired_total' as const } : {}),
+    ...(row.master_load_basis === 'paired_total'
+      ? { loadBasis: 'paired_total' as const }
+      : {}),
     defaultRepMin: numberOrNull(row.default_rep_min),
     defaultRepMax: numberOrNull(row.default_rep_max),
     defaultWorkingSets: numberOrNull(row.default_working_sets),
@@ -138,8 +140,14 @@ function groupExerciseHistory(rows: PerformanceRow[]) {
       actualLoadGrams: numberOrNull(row.actual_load_grams),
       actualReps: numberOrNull(row.actual_reps),
       ...setMetadata(row),
-      targetRepMin: row.target_rep_min, targetRepMax: row.target_rep_max,
-      ...(row.actual_reps_left !== null || row.actual_reps_right !== null ? { actualRepsLeft: row.actual_reps_left, actualRepsRight: row.actual_reps_right } : {}),
+      targetRepMin: row.target_rep_min,
+      targetRepMax: row.target_rep_max,
+      ...(row.actual_reps_left !== null || row.actual_reps_right !== null
+        ? {
+            actualRepsLeft: row.actual_reps_left,
+            actualRepsRight: row.actual_reps_right,
+          }
+        : {}),
       deletedAt: row.set_deleted_at,
     };
     item.performance.sets.push(set);
@@ -160,6 +168,7 @@ export async function getAnalyticsInput(
           `SELECT id, local_date
            FROM workout
            WHERE owner_id = ? AND status = 'completed' AND deleted_at IS NULL
+             AND EXISTS (SELECT 1 FROM workout_exercise re JOIN workout_set rs ON rs.workout_exercise_id = re.id WHERE re.workout_id = workout.id AND rs.deleted_at IS NULL AND rs.status = 'completed' AND rs.actual_load_grams >= 0 AND rs.actual_reps > 0)
            ORDER BY local_date, COALESCE(ended_at, updated_at, started_at), id`,
         )
         .bind(ownerId)
@@ -263,7 +272,15 @@ export async function getAnalyticsSnapshot(
   const input = await getAnalyticsInput(db, range, now);
   const excluded = new Set(excludedWorkoutIds);
   input.workouts = input.workouts.filter((item) => !excluded.has(item.id));
-  input.exerciseHistory = input.exerciseHistory.filter((item) => !excluded.has(item.performance.workoutId));
-  input.acceptedTargets = input.acceptedTargets.filter((item) => !excluded.has(item.sourceWorkoutId)).map((item) => excluded.has(item.appliedWorkoutId ?? '') ? { ...item, appliedWorkoutDeletedAt: now.toISOString() } : item);
+  input.exerciseHistory = input.exerciseHistory.filter(
+    (item) => !excluded.has(item.performance.workoutId),
+  );
+  input.acceptedTargets = input.acceptedTargets
+    .filter((item) => !excluded.has(item.sourceWorkoutId))
+    .map((item) =>
+      excluded.has(item.appliedWorkoutId ?? '')
+        ? { ...item, appliedWorkoutDeletedAt: now.toISOString() }
+        : item,
+    );
   return buildAnalytics(input);
 }

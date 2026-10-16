@@ -17,7 +17,11 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import type { WorkoutSet } from '@/lib/workouts/types';
 import { setAchievementLabel } from '@/lib/progression/active-workout';
-import { setRoleLabel, loadBasisLabel, loadBasisHelp } from '@/lib/workouts/reps';
+import {
+  setRoleLabel,
+  loadBasisLabel,
+  loadBasisHelp,
+} from '@/lib/workouts/reps';
 import type { SetComparison } from '@/lib/progression/active-workout';
 import { cn } from '@/lib/utils';
 import { setPerformanceLabel } from '@/lib/workouts/history';
@@ -37,7 +41,9 @@ export function WorkoutSetRow({
   recentRecord,
   isNext = false,
   repMode = 'standard',
+  instant = false,
 }: {
+  instant?: boolean;
   set: WorkoutSet;
   number: number;
   onChange: (set: WorkoutSet) => void;
@@ -61,7 +67,7 @@ export function WorkoutSetRow({
   const root = useRef<HTMLDivElement>(null);
   const [rangeNotice, setRangeNotice] = useState<string | null>(null);
   const perSide = repMode === 'per_side';
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(instant);
   const completed = set.status === 'completed';
   const patch = (values: Partial<WorkoutSet>) => {
     const next = { ...set, ...values, updatedAt: new Date().toISOString() };
@@ -97,7 +103,22 @@ export function WorkoutSetRow({
       ));
   const achievement = setAchievementLabel(set);
   const fieldId = (field: string) => `${set.id}-${field}`;
-  if (set.status === 'skipped' && !editing) return <div className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm"><p>SET {number} · {setRoleLabel(set.role)} · 未実施（スキップ）</p><Button type="button" variant="outline" className="min-h-11" onClick={() => patch({ status: 'planned', completedAt: null })}>このセットを再開</Button></div>;
+  if (set.status === 'skipped' && !editing)
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm">
+        <p>
+          SET {number} · {setRoleLabel(set.role)} · 未実施（スキップ）
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => patch({ status: 'planned', completedAt: null })}
+        >
+          このセットを入力する
+        </Button>
+      </div>
+    );
   if (completed && !editing)
     return (
       <div className="rounded-2xl border border-primary/30 bg-primary/5 p-3">
@@ -188,18 +209,44 @@ export function WorkoutSetRow({
           </Button>
         </div>
       </div>
-      {completed && (
+      {!instant && completed && (
         <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
           編集を閉じる
         </Button>
       )}
       <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-xs">
-        <label htmlFor={fieldId('role')} className="mb-2 block text-xs font-bold">セットの役割（同じ役割の前回実績と比較）</label>
-      <select id={fieldId('role')} aria-label={`セット${number}の役割`} value={set.role ?? 'standard'} onChange={event => patch({ role: event.target.value === 'top' ? 'top' : event.target.value === 'backoff' ? 'backoff' : 'standard' })} className="mb-3 min-h-11 w-full rounded-lg border bg-background px-3 text-base">
-        <option value="standard">通常（セット順で比較）</option><option value="top">トップセット</option><option value="backoff">バックオフセット</option>
-      </select>
-      {perSide && <p className="mb-3 leading-relaxed text-muted-foreground">{loadBasisHelp(set.loadBasis)}</p>}
-      {historyStatus === 'loading' ? (
+        <label
+          htmlFor={fieldId('role')}
+          className="mb-2 block text-xs font-bold"
+        >
+          セットの役割（同じ役割の前回実績と比較）
+        </label>
+        <select
+          id={fieldId('role')}
+          aria-label={`セット${number}の役割`}
+          value={set.role ?? 'standard'}
+          onChange={(event) =>
+            patch({
+              role:
+                event.target.value === 'top'
+                  ? 'top'
+                  : event.target.value === 'backoff'
+                    ? 'backoff'
+                    : 'standard',
+            })
+          }
+          className="mb-3 min-h-11 w-full rounded-lg border bg-background px-3 text-base"
+        >
+          <option value="standard">通常（セット順で比較）</option>
+          <option value="top">トップセット</option>
+          <option value="backoff">バックオフセット</option>
+        </select>
+        {perSide && (
+          <p className="mb-3 leading-relaxed text-muted-foreground">
+            {loadBasisHelp(set.loadBasis)}
+          </p>
+        )}
+        {historyStatus === 'loading' ? (
           <p className="text-muted-foreground">このセットの過去記録を確認中…</p>
         ) : historyStatus === 'error' ? (
           <p className="text-muted-foreground">
@@ -220,7 +267,7 @@ export function WorkoutSetRow({
                   {record.set.status === 'skipped'
                     ? '（スキップ）'
                     : record.set.status !== 'completed'
-                      ? '（未完了）'
+                      ? '（入力なし）'
                       : ''}
                 </span>
               </p>
@@ -273,11 +320,11 @@ export function WorkoutSetRow({
             (field, index) => (
               <div key={field} className="min-w-0 text-xs">
                 <label htmlFor={fieldId(field)}>
-                  {['目標kg', 'rep下限', 'rep上限'][index]}
+                  {['目標kg', '回数の下限', '回数の上限'][index]}
                 </label>
                 <ValidatedNumberInput
                   id={fieldId(field)}
-                  aria-label={`セット${number}の${['目標重量', '目標rep下限', '目標rep上限'][index]}`}
+                  aria-label={`セット${number}の${['目標重量', '目標回数の下限', '目標回数の上限'][index]}`}
                   min={0}
                   max={index === 0 ? 2000 : 999}
                   scale={index === 0 ? 1000 : 1}
@@ -333,7 +380,7 @@ export function WorkoutSetRow({
             </Button>
           </div>
         )}
-      <p className="mb-1 text-xs font-bold">セット後の実績</p>
+      <p className="mb-1 text-xs font-bold">実際に行った重量・回数</p>
       {perSide && (
         <p className="mb-2 text-xs text-muted-foreground">
           重量は共通、目標回数は左右それぞれ。進行判定は少ない側の回数を使います。
@@ -345,7 +392,8 @@ export function WorkoutSetRow({
             htmlFor={fieldId('actual-load')}
             className="text-xs font-semibold text-muted-foreground"
           >
-            重量（kg）{perSide ? ` · 左右共通・${loadBasisLabel(set.loadBasis)}` : ''}
+            重量（kg）
+            {perSide ? ` · 左右共通・${loadBasisLabel(set.loadBasis)}` : ''}
           </label>
           <ValidatedNumberInput
             id={fieldId('actual-load')}
@@ -376,11 +424,11 @@ export function WorkoutSetRow({
                 ? '右の回数'
                 : field === 'actualRepsLeft'
                   ? '左の回数'
-                  : 'rep'}
+                  : '回数'}
             </label>
             <ValidatedNumberInput
               id={fieldId(field)}
-              aria-label={`セット${number}の${field === 'actualRepsRight' ? '右回数' : field === 'actualRepsLeft' ? '左回数' : '実績rep'}`}
+              aria-label={`セット${number}の${field === 'actualRepsRight' ? '右回数' : field === 'actualRepsLeft' ? '左回数' : '回数'}`}
               required={
                 set.actualLoadGrams !== null ||
                 set.actualRepsLeft != null ||
@@ -407,34 +455,36 @@ export function WorkoutSetRow({
             />
           </div>
         ))}
-        <Button
-          type="button"
-          size="icon"
-          disabled={!completed && !canComplete}
-          className={cn(
-            'size-11',
-            completed && 'bg-muted text-foreground hover:bg-muted',
-          )}
-          aria-label={
-            completed
-              ? `セット${number}を未完了に戻す`
-              : `セット${number}を完了`
-          }
-          onClick={() => {
-            if (reportInvalidWorkoutInput(root.current)) return;
-            setEditing(false);
-            patch(
+        {!instant && (
+          <Button
+            type="button"
+            size="icon"
+            disabled={!completed && !canComplete}
+            className={cn(
+              'size-11',
+              completed && 'bg-muted text-foreground hover:bg-muted',
+            )}
+            aria-label={
               completed
-                ? { status: 'planned', completedAt: null }
-                : {
-                    status: 'completed',
-                    completedAt: new Date().toISOString(),
-                  },
-            );
-          }}
-        >
-          {completed ? <RotateCcw /> : <Check />}
-        </Button>
+                ? `セット${number}を未完了に戻す`
+                : `セット${number}を完了`
+            }
+            onClick={() => {
+              if (reportInvalidWorkoutInput(root.current)) return;
+              setEditing(false);
+              patch(
+                completed
+                  ? { status: 'planned', completedAt: null }
+                  : {
+                      status: 'completed',
+                      completedAt: new Date().toISOString(),
+                    },
+              );
+            }}
+          >
+            {completed ? <RotateCcw /> : <Check />}
+          </Button>
+        )}
       </div>
       {!canComplete &&
         set.actualLoadGrams !== null &&
@@ -447,9 +497,7 @@ export function WorkoutSetRow({
         set.targetLoadGrams !== null &&
         set.targetRepMin !== null && (
           <p className="mt-2 text-xs font-bold">
-            {completed ? '今回の結果' : '入力中の実績'}：
-            {achievement}
-
+            {completed ? '今回の結果' : '入力中の実績'}：{achievement}
           </p>
         )}
       {comparison.label && (

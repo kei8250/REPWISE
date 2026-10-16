@@ -22,7 +22,7 @@ import type {
   ExerciseMaster,
   WorkoutExercise as WorkoutExerciseType,
 } from '@/lib/workouts/types';
-import { useActiveWorkout } from '@/hooks/use-active-workout';
+import { useRecordingWorkout } from '@/hooks/use-recording-workout';
 import { useExerciseProgression } from '@/hooks/use-exercise-progression';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { ExercisePicker } from './exercise-picker';
@@ -41,8 +41,8 @@ export function ActiveWorkout({ id }: { id: string }) {
     reviewServer,
     serverReview,
     conflictBaseVersion,
-    complete,
-  } = useActiveWorkout(id);
+    flush,
+  } = useRecordingWorkout(id);
   const recordingRoot = useRef<HTMLDivElement>(null);
   const viewReady = Boolean(workout);
   useEffect(() => {
@@ -50,7 +50,11 @@ export function ActiveWorkout({ id }: { id: string }) {
     const root = recordingRoot.current;
     const header = root?.querySelector('header');
     if (!root || !header) return;
-    const measure = () => root.style.setProperty('--recording-header-height', `${header.getBoundingClientRect().height}px`);
+    const measure = () =>
+      root.style.setProperty(
+        '--recording-header-height',
+        `${header.getBoundingClientRect().height}px`,
+      );
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(header);
@@ -70,7 +74,12 @@ export function ActiveWorkout({ id }: { id: string }) {
     workout?.exercises.find(
       (exercise) => exercise.id === effectiveSelectedId,
     ) ?? null;
-  const progression = useExerciseProgression(selected?.exerciseId ?? null, workout?.localDate, workout?.startedAt, workout?.id);
+  const progression = useExerciseProgression(
+    selected?.exerciseId ?? null,
+    workout?.localDate,
+    workout?.startedAt,
+    workout?.id,
+  );
 
   if (!workout)
     return (
@@ -87,7 +96,10 @@ export function ActiveWorkout({ id }: { id: string }) {
               <Button className="mt-4 min-h-11" onClick={() => void retry()}>
                 再試行
               </Button>
-              <a href={APP_ROUTES.home} className="mt-4 block min-h-11 p-3 font-bold text-primary">
+              <a
+                href={APP_ROUTES.home}
+                className="mt-4 block min-h-11 p-3 font-bold text-primary"
+              >
                 ホームへ戻る
               </a>
             </>
@@ -95,15 +107,6 @@ export function ActiveWorkout({ id }: { id: string }) {
         </div>
       </div>
     );
-
-  if (workout.status === 'completed' && !finishing) return (
-    <div className="mx-auto max-w-xl space-y-4 p-6 text-center">
-      <Check className="mx-auto size-8 text-primary" />
-      <h1 className="text-xl font-black">このトレーニングは終了済みです</h1>
-      <p className="text-sm text-muted-foreground">{workout.name}</p>
-      <a href={APP_ROUTES.workoutDetail(workout.id)} className="inline-block font-bold text-primary">完了した記録を確認する</a>
-    </div>
-  );
 
   const updateExercise = (next: WorkoutExerciseType) =>
     setWorkout((current) => ({
@@ -115,7 +118,7 @@ export function ActiveWorkout({ id }: { id: string }) {
   const deleteExercise = (target: WorkoutExerciseType) => {
     if (
       !window.confirm(
-        `${target.exerciseNameSnapshot}をこのワークアウトから削除しますか？`,
+        `${target.exerciseNameSnapshot}をこのトレーニングから削除しますか？`,
       )
     )
       return;
@@ -145,29 +148,24 @@ export function ActiveWorkout({ id }: { id: string }) {
   };
   const finish = async () => {
     if (reportInvalidWorkoutInput(recordingRoot.current)) return;
-    if (
-      !window.confirm(
-        '入力済みのセットを確定してトレーニングを終了しますか？未入力のセットはスキップになります。終了後も履歴から編集できます。',
-      )
-    )
-      return;
     setFinishing(true);
     setFinishError(null);
     try {
-      const completed = await complete();
-      navigateTo(APP_ROUTES.workoutDetail(completed.id));
+      await flush();
+      navigateTo(APP_ROUTES.workoutDetail(workout.id));
     } catch (cause) {
       setFinishError(
-        cause instanceof Error
-          ? cause.message
-          : 'ワークアウトを終了できませんでした',
+        cause instanceof Error ? cause.message : '記録を保存できませんでした',
       );
       setFinishing(false);
     }
   };
 
   return (
-    <div ref={recordingRoot} className="mx-auto min-h-screen max-w-3xl bg-background pb-28">
+    <div
+      ref={recordingRoot}
+      className="mx-auto min-h-screen max-w-3xl bg-background pb-28"
+    >
       <header
         data-local-save-state={localSaveState}
         data-sync-state={saveState}
@@ -180,7 +178,17 @@ export function ActiveWorkout({ id }: { id: string }) {
             size="icon"
             className="size-11"
             aria-label="ホームへ戻る"
-            onClick={() => navigateTo(APP_ROUTES.home)}
+            onClick={() => {
+              void flush()
+                .then(() => navigateTo(APP_ROUTES.home))
+                .catch((cause) =>
+                  setFinishError(
+                    cause instanceof Error
+                      ? cause.message
+                      : '保存状態を確認してください',
+                  ),
+                );
+            }}
           >
             <ChevronLeft />
           </Button>
@@ -201,14 +209,28 @@ export function ActiveWorkout({ id }: { id: string }) {
             onClick={() => void finish()}
           >
             {finishing ? <LoaderCircle className="animate-spin" /> : <Check />}{' '}
-            終了
+            記録を確認
           </Button>
         </div>
         {saveState === 'error' && error && (
-          <div role="alert" className="mt-3 rounded-xl bg-destructive/5 p-3 text-xs">
-            <p className="font-bold">{localSaveState === 'saved' ? 'この端末には保存済みです。サーバー同期に失敗しています。' : '端末の保存状態を確認してください。'}</p>
-            <p className="mt-1 whitespace-pre-wrap break-words text-destructive">{error}</p>
-            <a href={APP_ROUTES.settings} className="mt-2 inline-block font-bold text-primary">設定で同期状態を確認</a>
+          <div
+            role="alert"
+            className="mt-3 rounded-xl bg-destructive/5 p-3 text-xs"
+          >
+            <p className="font-bold">
+              {localSaveState === 'saved'
+                ? 'この端末には保存済みです。サーバー同期に失敗しています。'
+                : '端末の保存状態を確認してください。'}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-destructive">
+              {error}
+            </p>
+            <a
+              href={APP_ROUTES.settings}
+              className="mt-2 inline-block font-bold text-primary"
+            >
+              設定で同期状態を確認
+            </a>
           </div>
         )}
         {workout.exercises.length > 0 && (
@@ -262,12 +284,13 @@ export function ActiveWorkout({ id }: { id: string }) {
               <div>
                 <p className="font-black">競合あり</p>
                 <p className="mt-1">
-                  別の変更が存在するため、自動同期を停止しました。ローカル記録はこの端末に保持されています。
+                  別の画面で変更された記録があるため、自動同期を止めています。入力内容は保持しています。内容を確認してから同期してください。
                 </p>
                 {serverReview && (
                   <p className="mt-2 text-xs font-bold">
                     端末の同期元: v{conflictBaseVersion ?? '—'} · サーバー側: v
-                    {serverReview.version} · {serverReview.status}
+                    {serverReview.version} · 更新日時{' '}
+                    {new Date(serverReview.updatedAt).toLocaleString('ja-JP')}
                   </p>
                 )}
                 <Button
@@ -306,12 +329,7 @@ export function ActiveWorkout({ id }: { id: string }) {
             startedAt={workout.startedAt}
             progression={progression.state}
             onRetryProgression={progression.retry}
-            nextActionLabel={workout.exercises.some(exercise => exercise.id !== selected.id && !['completed', 'skipped'].includes(exercise.status)) ? '次の未完了の種目へ' : 'ワークアウトを終了'}
-            onFinished={() => {
-              const next = workout.exercises.find(exercise => exercise.id !== selected.id && !['completed', 'skipped'].includes(exercise.status));
-              if (next) { setSelectedId(next.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-              else void finish();
-            }}
+            instant
             isFirst={selected.position === 0}
             isLast={selected.position === workout.exercises.length - 1}
             onChange={updateExercise}
@@ -331,7 +349,7 @@ export function ActiveWorkout({ id }: { id: string }) {
         )}
         <div className="rounded-2xl border bg-card p-4">
           <label htmlFor="workout-overall-note" className="text-sm font-bold">
-            ワークアウト全体のメモ
+            トレーニング全体のメモ
           </label>
           <Textarea
             id="workout-overall-note"

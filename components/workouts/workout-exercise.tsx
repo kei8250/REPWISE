@@ -35,6 +35,7 @@ export function WorkoutExercise({
   onMove,
   onFinished,
   nextActionLabel,
+  instant = false,
 }: {
   exercise: WorkoutExerciseType;
   workoutId: string;
@@ -49,6 +50,7 @@ export function WorkoutExercise({
   onMove: (direction: -1 | 1) => void;
   onFinished?: () => void;
   nextActionLabel?: string;
+  instant?: boolean;
 }) {
   const [completionError, setCompletionError] = useState<string | null>(null);
   const focusCompletedAction = useRef(false);
@@ -60,16 +62,31 @@ export function WorkoutExercise({
     startedAt,
   );
   const updateSet = (next: WorkoutSet) => {
-    const justCompleted = next.status === 'completed' && exercise.sets.find(set => set.id === next.id)?.status !== 'completed';
+    const justCompleted =
+      next.status === 'completed' &&
+      exercise.sets.find((set) => set.id === next.id)?.status !== 'completed';
     onChange({
       ...exercise,
-      ...(next.status === 'planned' && ['completed', 'skipped'].includes(exercise.status) ? { status: 'in_progress' as const, completedAt: null } : {}),
+      ...(next.status === 'planned' &&
+      ['completed', 'skipped'].includes(exercise.status)
+        ? { status: 'in_progress' as const, completedAt: null }
+        : {}),
       sets: exercise.sets.map((set) => (set.id === next.id ? next : set)),
       updatedAt: new Date().toISOString(),
     });
     if (justCompleted) {
-      const following = exercise.sets.find(set => set.id !== next.id && set.status !== 'completed' && set.status !== 'skipped');
-      if (following) requestAnimationFrame(() => document.getElementById(`workout-set-${following.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      const following = exercise.sets.find(
+        (set) =>
+          set.id !== next.id &&
+          set.status !== 'completed' &&
+          set.status !== 'skipped',
+      );
+      if (following)
+        requestAnimationFrame(() =>
+          document
+            .getElementById(`workout-set-${following.id}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        );
     }
   };
   const deleteSet = (id: string) =>
@@ -89,8 +106,14 @@ export function WorkoutExercise({
       updatedAt: new Date().toISOString(),
     });
   };
-  const nextSet = exercise.status === 'completed' || exercise.status === 'skipped' ? undefined : exercise.sets.find(set => set.status !== 'completed' && set.status !== 'skipped');
-  const completed = exercise.status === 'completed' || exercise.status === 'skipped';
+  const nextSet =
+    exercise.status === 'completed' || exercise.status === 'skipped'
+      ? undefined
+      : exercise.sets.find(
+          (set) => set.status !== 'completed' && set.status !== 'skipped',
+        );
+  const completed =
+    exercise.status === 'completed' || exercise.status === 'skipped';
   useEffect(() => {
     if (!completed || !focusCompletedAction.current) return;
     focusCompletedAction.current = false;
@@ -103,18 +126,18 @@ export function WorkoutExercise({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold text-primary">
-            EXERCISE {exercise.position + 1}
+            種目 {exercise.position + 1}
           </p>
           <h2 className="mt-1 text-2xl font-black tracking-tight">
             {exercise.exerciseNameSnapshot}
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {exercise.sets.filter((set) => set.status === 'completed').length} /{' '}
-            {exercise.sets.length} セット完了
+            {exercise.sets.length} セット入力済み
           </p>
           <progress
             aria-label={`${exercise.exerciseNameSnapshot}のセット完了状況`}
-            className="mt-2 h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
+            className="mt-2 h-2 w-full overflow-hidden rounded-full accent-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-slate-200 [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-emerald-800"
             value={
               exercise.sets.filter((set) => set.status === 'completed').length
             }
@@ -156,24 +179,48 @@ export function WorkoutExercise({
           </Button>
         </div>
       </div>
-      {nextSet && <a className="flex min-h-11 items-center justify-center rounded-xl bg-primary/10 px-3 text-sm font-bold text-primary" href={`#workout-set-${nextSet.id}`}>次に取り組む SET {nextSet.position + 1} へ</a>}
-      <WorkoutGoalProgress exercise={exercise} localDate={localDate} workoutId={workoutId} />
+      {nextSet && (
+        <a
+          className="flex min-h-11 items-center justify-center rounded-xl bg-primary/10 px-3 text-sm font-bold text-primary"
+          href={`#workout-set-${nextSet.id}`}
+        >
+          次に取り組む SET {nextSet.position + 1} へ
+        </a>
+      )}
+      <WorkoutGoalProgress
+        exercise={exercise}
+        localDate={localDate}
+        workoutId={workoutId}
+        instant={instant}
+      />
       <ExerciseProgression
         exercise={exercise}
         state={progression}
-        referenceSummary={describeSetReferences(history.references ?? history.items, exercise.sets, history.status)}
+        referenceSummary={describeSetReferences(
+          history.references ?? history.items,
+          exercise.sets,
+          history.status,
+        )}
         onRetry={onRetryProgression}
         onChange={onChange}
       />
-      <ExerciseSettingsReference key={exercise.exerciseId} exerciseId={exercise.exerciseId} />
+      <ExerciseSettingsReference
+        key={exercise.exerciseId}
+        exerciseId={exercise.exerciseId}
+      />
       <ExerciseHistory history={history} />
       <div className="space-y-3">
         {exercise.sets.map((set, index) => {
-          const reference = referenceForSet(history.references ?? history.items, set, exercise.sets);
+          const reference = referenceForSet(
+            history.references ?? history.items,
+            set,
+            exercise.sets,
+          );
           const previous = reference?.set;
           return (
             <WorkoutSetRow
               key={set.id}
+              instant={instant}
               set={set}
               repMode={exercise.repMode}
               number={index + 1}
@@ -183,10 +230,18 @@ export function WorkoutExercise({
               isFirst={index === 0}
               isLast={index === exercise.sets.length - 1}
               onMove={(direction) => moveSet(index, direction)}
-              previousRecords={reference ? [{
-                localDate: reference.entry.localDate, label: '直近の有効実績',
-                set: reference.set, exerciseNote: reference.entry.note,
-              }] : []}
+              previousRecords={
+                reference
+                  ? [
+                      {
+                        localDate: reference.entry.localDate,
+                        label: '直近の有効実績',
+                        set: reference.set,
+                        exerciseNote: reference.entry.note,
+                      },
+                    ]
+                  : []
+              }
               recentRecord={history.items[0]}
               isNext={set.id === nextSet?.id}
               historyStatus={history.status}
@@ -231,30 +286,79 @@ export function WorkoutExercise({
         placeholder="この種目全体のメモ（任意）"
         className="min-h-20 resize-none"
       />
-      {completionError && <p role="alert" className="text-sm text-destructive">{completionError}</p>}
-      {completed && <div id={`exercise-completed-${exercise.id}`} className="space-y-3">
-        <output className="block rounded-xl bg-primary/10 p-3 text-sm font-bold">{exercise.status === 'skipped' ? 'この種目は未実施で終了しました。' : 'この種目は完了しました。未実施セットはスキップ済みです。'}</output>
-        {onFinished && <Button type="button" className="min-h-11 w-full" onClick={onFinished}>{nextActionLabel ?? '次へ進む'}</Button>}
-      </div>}
-      <Button
-        type="button"
-        variant={completed ? 'outline' : 'secondary'}
-        className="h-11 w-full rounded-xl"
-        onClick={() => {
-          if (completed) { onChange({ ...exercise, status: 'in_progress', completedAt: null }); return; }
-          if (reportInvalidWorkoutInput(document.getElementById(`exercise-${exercise.id}`) ?? document)) return;
-          try {
-            const next = prepareExerciseCompletion(exercise);
-            const skipped = next.sets.filter(set => set.status === 'skipped' && exercise.sets.find(original => original.id === set.id)?.status !== 'skipped').length;
-            if (skipped && !window.confirm(`未入力の${skipped}セットを未実施としてスキップし、この種目を終了しますか？入力済みの有効なセットは完了として保存します。`)) return;
-            setCompletionError(null);
-            focusCompletedAction.current = true;
-            onChange(next);
-          } catch (cause) { setCompletionError(cause instanceof Error ? cause.message : '入力を確認してください'); }
-        }}
-      >
-        <CheckCircle2 /> {completed ? '種目を再開する' : 'この種目を完了'}
-      </Button>
+      {completionError && (
+        <p role="alert" className="text-sm text-destructive">
+          {completionError}
+        </p>
+      )}
+      {!instant && completed && (
+        <div id={`exercise-completed-${exercise.id}`} className="space-y-3">
+          <output className="block rounded-xl bg-primary/10 p-3 text-sm font-bold">
+            {exercise.status === 'skipped'
+              ? 'この種目は未実施で終了しました。'
+              : 'この種目は完了しました。未実施セットはスキップ済みです。'}
+          </output>
+          {onFinished && (
+            <Button
+              type="button"
+              className="min-h-11 w-full"
+              onClick={onFinished}
+            >
+              {nextActionLabel ?? '次へ進む'}
+            </Button>
+          )}
+        </div>
+      )}
+      {!instant && (
+        <Button
+          type="button"
+          variant={completed ? 'outline' : 'secondary'}
+          className="h-11 w-full rounded-xl"
+          onClick={() => {
+            if (completed) {
+              onChange({
+                ...exercise,
+                status: 'in_progress',
+                completedAt: null,
+              });
+              return;
+            }
+            if (
+              reportInvalidWorkoutInput(
+                document.getElementById(`exercise-${exercise.id}`) ?? document,
+              )
+            )
+              return;
+            try {
+              const next = prepareExerciseCompletion(exercise);
+              const skipped = next.sets.filter(
+                (set) =>
+                  set.status === 'skipped' &&
+                  exercise.sets.find((original) => original.id === set.id)
+                    ?.status !== 'skipped',
+              ).length;
+              if (
+                skipped &&
+                !window.confirm(
+                  `未入力の${skipped}セットを未実施としてスキップし、この種目を終了しますか？入力済みの有効なセットは完了として保存します。`,
+                )
+              )
+                return;
+              setCompletionError(null);
+              focusCompletedAction.current = true;
+              onChange(next);
+            } catch (cause) {
+              setCompletionError(
+                cause instanceof Error
+                  ? cause.message
+                  : '入力を確認してください',
+              );
+            }
+          }}
+        >
+          <CheckCircle2 /> {completed ? '種目を再開する' : 'この種目を完了'}
+        </Button>
+      )}
     </section>
   );
 }

@@ -338,6 +338,7 @@ export async function saveWorkoutDraftAndEnqueueMutation(
   operation: WorkoutMutationOperation,
   options: {
     permanentDelete?: boolean;
+    autoRecord?: boolean;
     localUpdatedAt?: string;
     serverUpdatedAt?: string | null;
     databaseName?: string;
@@ -355,10 +356,10 @@ export async function saveWorkoutDraftAndEnqueueMutation(
     operation === 'delete'
       ? 'deleted'
       : operation === 'edit'
-        ? 'completed_edit'
+        ? options.autoRecord ? 'completed' : 'completed_edit'
         : operation === 'restore'
           ? (workout.status === 'active' ? 'active' : 'completed')
-          : operation === 'complete'
+          : operation === 'complete' || (operation === 'create' && workout.status === 'completed')
           ? 'completed'
           : 'active',
     { ...options, localUpdatedAt },
@@ -628,7 +629,7 @@ export async function acknowledgeWorkoutMutation(
         : mutation.operation === 'restore'
           ? (serverWorkout.status === 'active' ? 'active' : 'completed')
         : mutation.operation === 'edit' ||
-            mutation.operation === 'complete'
+            mutation.operation === 'complete' || serverWorkout.status === 'completed'
           ? 'completed'
           : 'active';
     if (permanent) {

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ArrowRight, LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { normalizeRecordedWorkout } from '@/lib/workouts/instant-recording';
 import { createLocalWorkout } from '@/lib/workouts/draft';
 import { saveWorkoutDraftAndEnqueueMutation } from '@/lib/workouts/local-drafts';
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
@@ -24,12 +25,14 @@ export function StartWorkoutForm() {
     setLoading(true);
     setError(null);
     try {
-      const workout = createLocalWorkout({
-        name: name.trim() || defaultWorkoutName(localDate),
-        localDate,
-        timezone:
-          Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
-      });
+      const workout = normalizeRecordedWorkout(
+        createLocalWorkout({
+          name: name.trim() || defaultWorkoutName(localDate),
+          localDate,
+          timezone:
+            Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
+        }),
+      );
       await saveWorkoutDraftAndEnqueueMutation(workout, 'create', {
         localUpdatedAt: workout.updatedAt,
         serverUpdatedAt: null,
@@ -59,7 +62,7 @@ export function StartWorkoutForm() {
           className="mt-2 h-11"
         />
         <p className="mt-2 text-xs text-muted-foreground">
-          日付の名前のまま開始できます。
+          名前を変えず、日付のまま記録することもできます。
         </p>
       </div>
       <div>
@@ -86,14 +89,14 @@ export function StartWorkoutForm() {
       <Button
         type="submit"
         size="lg"
-        disabled={loading}
+        disabled={loading || !today || !localDate}
         className="h-12 w-full rounded-xl"
       >
         {loading ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}{' '}
-        記録を開始
+        種目を選ぶ
       </Button>
       <p className="text-center text-xs leading-relaxed text-muted-foreground">
-        開始後は入力内容が自動保存されます。種目は次の画面で追加します。
+        重量と回数を入力すると、自動でその日の記録に反映されます。あとから編集・削除できます。
       </p>
     </form>
   );

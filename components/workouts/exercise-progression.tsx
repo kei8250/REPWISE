@@ -42,7 +42,7 @@ export function ExerciseProgression({
 }) {
   const targets = (
     <div className="rounded-xl border bg-card p-3">
-      <p className="text-xs font-bold">今回の保存済み目標 · セット別</p>
+      <p className="text-xs font-bold">今回のセット目標 · セット別</p>
       <ul className="mt-2 space-y-1 text-sm">
         {exercise.sets.map((set) => (
           <li key={set.id}>

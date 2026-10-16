@@ -27,8 +27,9 @@ export function RmProgressEvidence({
       )}
       {progress.percent !== null && (
         <p>
-          目標の{progress.targetReps}回に換算：{kg(progress.currentLoadGrams)} ÷{' '}
-          {kg(progress.targetLoadGrams)} ＝ {progress.percent}%（推定）
+          {progress.targetReps}回できる重量の目安：
+          {kg(progress.currentLoadGrams)} ÷ {kg(progress.targetLoadGrams)} ＝{' '}
+          {progress.percent}%（推定）
         </p>
       )}
       {progress.actual && (

@@ -534,8 +534,9 @@ export function validateWorkoutMutation(value: unknown): WorkoutMutationInput {
   if (['delete', 'restore'].includes(operation) && workout && !['active', 'completed'].includes(workout.status)) {
     issues.push({ path: 'payload.workout.status', message: '進行中または完了済みの記録を選んでください' });
   }
+  if (operation === 'create' && workout && !['active','completed'].includes(workout.status)) issues.push({path:'payload.workout.status',message:'記録として保存できる状態ではありません'});
   if (
-    ['create', 'replace'].includes(operation) &&
+    ['replace'].includes(operation) &&
     workout?.status !== 'active'
   ) {
     issues.push({

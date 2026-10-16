@@ -233,7 +233,7 @@ describe('mobile progressive overload workflow', () => {
     };
     const html = renderToStaticMarkup(createElement(WorkoutSetRow, props));
     expect(html).toContain('今回の目標');
-    expect(html).toContain('セット後の実績');
+    expect(html).toContain('実際に行った重量・回数');
     expect(html).toContain('肩を下げる');
     expect(html).toContain('フォーム優先');
     expect(html).toContain('inputMode="decimal"');

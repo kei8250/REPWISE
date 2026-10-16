@@ -92,8 +92,8 @@ describe('goal progress in home and recording', () => {
     );
     expect(html).toContain('保存済みの達成度');
     expect(html).toContain('75%');
-    expect(html).toContain('今回の完了セットを含む見込み（RM換算）：100%');
-    expect(html).toContain('ワークアウト保存前');
+    expect(html).toContain('今回の入力を含む達成度（RM換算）：100%');
+    expect(html).toContain('入力内容を保存・同期中');
     expect(html).toContain('2026-10-31');
   });
   it('uncompleted or insufficient-rep sets cannot satisfy the goal', () => {
@@ -169,4 +169,28 @@ describe('goal progress in home and recording', () => {
     expect(html).toContain('進捗を取得できません');
     expect(html).not.toContain('0%');
   });
+});
+
+it('instant recording counts entered results and marks the target end of the bar', () => {
+  const e = exercise();
+  e.sets[0] = {
+    ...e.sets[0],
+    status: 'completed',
+    actualLoadGrams: 80000,
+    actualReps: 8,
+  };
+  const html = renderToStaticMarkup(
+    createElement(WorkoutGoalProgress, {
+      exercise: e,
+      localDate: '2026-10-16',
+      workoutId: 'now',
+      instant: true,
+    }),
+  );
+  expect(html).toContain('目標達成度（今回の入力を含む・RM換算）');
+  expect(html).toContain('現在 96kg ÷ 目標 96kg');
+  expect(html).not.toContain('保存済みの達成度');
+  expect(html).toContain('目標 100%');
+  expect(html).toContain('bg-slate-200');
+  expect(html).toContain('bg-emerald-800');
 });

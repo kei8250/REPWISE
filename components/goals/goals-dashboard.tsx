@@ -1,9 +1,13 @@
 'use client';
 
+import { GoalProgressBar } from './goal-progress-bar';
 import { useEffect, useState, useRef, type SubmitEvent } from 'react';
-import { listExerciseMasters, getAnalytics } from '@/lib/workouts/api-client';
+import { listExerciseMasters } from '@/lib/workouts/api-client';
 import type { ExerciseMaster } from '@/lib/workouts/types';
-import type { AnalyticsSnapshot } from '@/lib/analytics/model';
+import {
+  loadGoalRecordedPerformances,
+  type GoalAnalyticsData,
+} from '@/lib/goals/recorded-performances';
 import { formatKilograms } from '@/lib/analytics/detail-view';
 import {
   addMonths,
@@ -34,7 +38,7 @@ const kg = (g: number) => formatKilograms(g, 2);
 export function GoalsDashboard() {
   const [goals, setGoals] = useState<TrainingGoal[]>([]);
   const [ready, setReady] = useState(false);
-  const [data, setData] = useState<AnalyticsSnapshot | null>(null);
+  const [data, setData] = useState<GoalAnalyticsData | null>(null);
   const [exercises, setExercises] = useState<ExerciseMaster[]>([]);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState(false);
@@ -77,7 +81,7 @@ export function GoalsDashboard() {
   }, []);
   useEffect(() => {
     let active = true;
-    Promise.all([getAnalytics('all'), listExerciseMasters()])
+    Promise.all([loadGoalRecordedPerformances(true), listExerciseMasters()])
       .then(([analytics, masters]) => {
         if (active) {
           setLoadError(false);
@@ -312,16 +316,10 @@ export function GoalsDashboard() {
                             : `${progress.percent}%`}
                         </strong>
                       </div>
-                      <progress
-                        aria-label={`${goal.exerciseName}の目標進捗`}
-                        aria-valuetext={
-                          progress.percent === null
-                            ? '換算データなし'
-                            : `${progress.percent}%（RM換算）`
-                        }
+                      <GoalProgressBar
+                        label={`${goal.exerciseName}の目標進捗`}
                         value={progress.barPercent}
-                        max={100}
-                        className="mt-2 h-3 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
+                        percent={progress.percent}
                       />
                     </div>
                     <RmProgressEvidence progress={progress} />
@@ -374,7 +372,7 @@ export function GoalsDashboard() {
                             : progress.percent === null
                               ? '換算実績がないため、開始値からの計画です。'
                               : progress.monthlyIncreaseGrams > 0
-                                ? `目標回数への換算重量からあと${kg(progress.monthlyIncreaseGrams)}（推定）が今月の計画上の目安です。`
+                                ? `目標回数に換算すると、あと${kg(progress.monthlyIncreaseGrams)}（推定）が今月の計画上の目安です。`
                                 : '今月の重量目安に届いています。この調子で積み重ねましょう。'}
                         </p>
                       </div>
@@ -481,7 +479,7 @@ function GoalForm({
 }: {
   goal: TrainingGoal | null;
   exercises: ExerciseMaster[];
-  analytics: AnalyticsSnapshot;
+  analytics: GoalAnalyticsData;
   today: string;
   onSave: (goal: TrainingGoal, previous?: string) => string | null;
   onCancel: () => void;

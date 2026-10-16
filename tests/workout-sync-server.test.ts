@@ -973,3 +973,21 @@ it('未送信の作成や不正入力があっても完全削除はIDで完了�
     expect(await listWorkouts(d1)).toEqual([]);
   } finally { vi.doUnmock('@/db'); }
 });
+
+it('records through create/edit without a complete operation and retains partial input',async()=>{
+ const {normalizeRecordedWorkout}=await import('@/lib/workouts/instant-recording');
+ const {validateWorkoutMutation}=await import('@/lib/workouts/validation');
+ const snapshot=workout();snapshot.exercises[0].sets=[{...set('instant-set',0),status:'planned',actualLoadGrams:60000,actualReps:null,completedAt:null}];
+ const initial=normalizeRecordedWorkout(snapshot,timestamp);
+ const created=await applyWorkoutMutation(d1,validateWorkoutMutation(mutation('instant-create','create',initial)));
+ expect(created.workout.status).toBe('completed');expect(await listWorkouts(d1,'completed')).toEqual([]);
+ const {getAnalyticsSnapshot}=await import('@/lib/analytics/server-store');expect((await getAnalyticsSnapshot(d1,'all',new Date('2026-09-03T12:00:00Z'))).workouts.completedWorkoutCount).toBe(0);
+ const filled=structuredClone(created.workout);filled.exercises[0].sets[0].actualReps=8;
+ const updated=await applyWorkoutMutation(d1,validateWorkoutMutation(mutation('instant-edit','edit',normalizeRecordedWorkout(filled,timestamp))));
+ expect(updated.workout.exercises[0].sets[0].status).toBe('completed');expect((await listWorkouts(d1,'completed')).map(w=>w.id)).toContain(initial.id);
+ const analytics=await getAnalyticsSnapshot(d1,'all',new Date('2026-09-03T12:00:00Z'));
+ expect(analytics.exercises[0].repTrend[0]).toMatchObject({loadGrams:60000,bestReps:8});
+ const cleared=structuredClone(updated.workout);cleared.exercises[0].sets[0].actualReps=null;
+ const partial=await applyWorkoutMutation(d1,validateWorkoutMutation(mutation('instant-clear','edit',normalizeRecordedWorkout(cleared,timestamp))));
+ expect(partial.workout.exercises[0].sets[0]).toMatchObject({status:'planned',actualLoadGrams:60000,actualReps:null});expect(await listWorkouts(d1,'completed')).toEqual([]);
+});

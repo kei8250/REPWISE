@@ -1,5 +1,7 @@
 'use client';
 
+import { normalizeRecordedWorkout } from '@/lib/workouts/instant-recording';
+
 import { reportInvalidWorkoutInput } from './validated-number-input';
 import { prepareWorkoutCompletion } from '@/lib/workouts/completion';
 import { validateWorkoutSnapshot } from '@/lib/workouts/validation';
@@ -199,9 +201,7 @@ export function WorkoutDetail({ id }: { id: string }) {
 
   async function beginEdit() {
     if (!workout) return;
-    const next = { ...structuredClone(workout), deletedAt: null };
-    setEditing(true);
-    await persistEdit(next);
+    navigateTo(APP_ROUTES.activeWorkout(workout.id));
   }
 
   async function saveEdit() {
@@ -291,7 +291,7 @@ export function WorkoutDetail({ id }: { id: string }) {
     setError(null);
     try {
       const copied = copyWorkoutForToday(workout);
-      await saveWorkoutDraftAndEnqueueMutation(copied, 'create', {
+      await saveWorkoutDraftAndEnqueueMutation(normalizeRecordedWorkout(copied), 'create', {
         localUpdatedAt: copied.updatedAt,
         serverUpdatedAt: null,
       });
@@ -350,7 +350,7 @@ export function WorkoutDetail({ id }: { id: string }) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">
-                {workout.status === 'completed' ? '完了済み' : '入力途中'}
+                記録
               </Badge>
               <button
                 type="button"
@@ -402,7 +402,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                 <div>
                   <p className="font-black">競合あり</p>
                   <p className="mt-1">
-                    別の変更が存在するため、自動同期を停止しました。ローカル編集内容は保持されています。
+                    別の変更が存在するため、自動同期を停止しました。この端末の編集内容は保持されています。
                   </p>
                   {serverReview && (
                     <p className="mt-2 text-xs font-bold">
@@ -476,7 +476,7 @@ export function WorkoutDetail({ id }: { id: string }) {
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>
-                            このワークアウトを削除しますか？
+                            このトレーニングを削除しますか？
                           </AlertDialogTitle>
                           <AlertDialogDescription>
                             この記録を削除します。削除すると元に戻せません。

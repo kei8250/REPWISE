@@ -136,7 +136,7 @@ function summary(
 describe('Phase 4B Home analytics summary', () => {
   it('A/B: analytics loading中もHomeの開始・履歴導線を初期描画する', () => {
     const markup = renderToStaticMarkup(createElement(HomeV2));
-    expect(markup).toContain('ワークアウトを開始');
+    expect(markup).toContain('トレーニングを記録');
     expect(markup).not.toContain('履歴を開く');
     expect(markup).not.toContain('前回のトレーニング');
     expect(markup).toContain('目標設定へ');

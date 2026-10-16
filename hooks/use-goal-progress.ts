@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { loadAnalyticsDetail } from '@/lib/analytics/detail-cache';
-import type { AnalyticsSnapshot } from '@/lib/analytics/model';
+import {
+  loadGoalRecordedPerformances,
+  type GoalAnalyticsData,
+} from '@/lib/goals/recorded-performances';
 import { GOALS_KEY, parseGoals } from '@/lib/goals/storage';
 import { localToday } from '@/lib/goals/model';
 
@@ -46,13 +48,13 @@ export function useGoalProgress(exerciseId?: string) {
   const enabled = goals.length > 0;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
-    data: AnalyticsSnapshot | null;
+    data: GoalAnalyticsData | null;
     error: boolean;
   }>({ data: null, error: false });
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    loadAnalyticsDetail('all', attempt > 0).then(
+    loadGoalRecordedPerformances(attempt > 0).then(
       (data) => {
         if (active) setState({ data, error: false });
       },

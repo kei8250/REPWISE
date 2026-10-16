@@ -405,7 +405,7 @@ function makeServerSnapshot(
   operation: WorkoutMutationInput['operation'],
   updatedAt: string,
 ): Workout {
-  const completed = operation === 'complete' || operation === 'edit';
+  const completed = operation === 'complete' || operation === 'edit' || (operation === 'create' && incoming.status === 'completed');
   const tombstoneOperation = operation === 'delete' || operation === 'restore';
   const source = tombstoneOperation && existing ? existing : incoming;
   return {

@@ -7,7 +7,7 @@ export default function HomePage() {
       <header className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-5 sm:px-7 lg:px-10">
         <div>
           <p className="text-xs font-semibold text-primary">
-            REPWISE v2 · Phase 1A
+            REPWISE
           </p>
           <h1 className="mt-1 text-2xl font-black tracking-tight">
             今日のトレーニング

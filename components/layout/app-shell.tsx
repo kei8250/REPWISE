@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Dumbbell, History, Home, Settings } from 'lucide-react';
+import { Activity, BarChart3, Dumbbell, History, Home, Settings, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   APP_ROUTES,
@@ -14,6 +14,7 @@ const navigationIcons = {
   history: History,
   analytics: BarChart3,
   settings: Settings,
+  goals: Target,
 } as const;
 
 export function AppShell({
@@ -23,7 +24,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href) || (href === APP_ROUTES.analytics && pathname.startsWith(APP_ROUTES.goals));
+    href === '/' ? pathname === '/' : pathname.startsWith(href);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -72,7 +73,7 @@ export function AppShell({
         <section className="min-w-0 flex-1 pb-24 lg:pb-8">{children}</section>
       </div>
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-border bg-card/95 px-4 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-border bg-card/95 px-4 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden"
         aria-label="モバイルナビゲーション"
       >
         {DESKTOP_NAVIGATION.map(({ key, href, label }) => {

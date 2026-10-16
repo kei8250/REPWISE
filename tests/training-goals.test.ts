@@ -176,7 +176,7 @@ describe('goal persistence and safe handoff', () => {
   });
   it('provides the goal page, offline storage disclosure and backup controls', () => {
     const html = renderToStaticMarkup(createElement(GoalsPage));
-    expect(html).toContain('目標と進捗');
+    expect(html).toContain('目標設定');
     expect(html).toContain('目標を追加');
     expect(html).toContain('端末間では同期されません');
     expect(html).toContain('JSONを書き出す');

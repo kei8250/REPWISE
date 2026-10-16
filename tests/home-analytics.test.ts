@@ -137,7 +137,9 @@ describe('Phase 4B Home analytics summary', () => {
   it('A/B: analytics loading中もHomeの開始・履歴導線を初期描画する', () => {
     const markup = renderToStaticMarkup(createElement(HomeV2));
     expect(markup).toContain('ワークアウトを開始');
-    expect(markup).toContain('履歴を開く');
+    expect(markup).not.toContain('履歴を開く');
+    expect(markup).not.toContain('前回のトレーニング');
+    expect(markup).toContain('目標設定へ');
     expect(markup).toContain('分析を読み込み中');
   });
 
@@ -358,4 +360,17 @@ describe('Phase 4B Home analytics summary', () => {
       markup.match(/href="\/analytics\?exerciseId=bench%20press"/g),
     ).toHaveLength(2);
   });
+});
+
+it('ホームでは期間集計を隠し、分析への導線を残す', () => {
+  const html = renderToStaticMarkup(
+    createElement(HomeAnalyticsSection, {
+      state: { status: 'success', data: summary() },
+      onRetry: vi.fn(),
+      showPeriodMetrics: false,
+    }),
+  );
+  expect(html).not.toContain('直近30日');
+  expect(html).not.toContain('直近7日');
+  expect(html).toContain('詳しい分析を見る');
 });

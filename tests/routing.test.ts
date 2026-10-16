@@ -41,11 +41,11 @@ describe('Phase 1A routing', () => {
     );
   });
 
-  it('renders the home start and history actions as native links', () => {
+  it('renders the home start and goal actions as native links', () => {
     const markup = renderToStaticMarkup(createElement(HomeV2));
 
     expect(markup).toContain(`href="${APP_ROUTES.newWorkout}"`);
-    expect(markup).toContain(`href="${APP_ROUTES.history}"`);
+    expect(markup).toContain(`href="${APP_ROUTES.goals}"`);
   });
 
   it('uses the same primary route definitions in desktop and mobile navigation', () => {

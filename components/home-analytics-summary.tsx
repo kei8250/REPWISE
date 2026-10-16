@@ -69,9 +69,11 @@ function AnalyticsSectionHeading({ period = false }: { period?: boolean }) {
 export function HomeAnalyticsSection({
   state,
   onRetry,
+  showPeriodMetrics = true,
 }: {
   state: HomeAnalyticsState;
   onRetry: () => void;
+  showPeriodMetrics?: boolean;
 }) {
   if (state.status === 'loading') {
     return (
@@ -113,7 +115,7 @@ export function HomeAnalyticsSection({
   if (!summary.hasTrainingData) {
     return (
       <section aria-labelledby="home-analytics-title">
-        <AnalyticsSectionHeading period />
+        <AnalyticsSectionHeading period={showPeriodMetrics} />
         <Card className="rounded-3xl border-dashed py-5 shadow-none">
           <CardContent className="px-5">
             <p className="font-bold">まだ分析できる記録がありません</p>
@@ -128,7 +130,7 @@ export function HomeAnalyticsSection({
 
   return (
     <section aria-labelledby="home-analytics-title">
-      <AnalyticsSectionHeading period />
+      <AnalyticsSectionHeading period={showPeriodMetrics} />
 
       {summary.insights && (
         <div className="mb-4">
@@ -229,36 +231,38 @@ export function HomeAnalyticsSection({
           </Card>
         )}
 
-        <div className="grid grid-cols-2 gap-3 lg:col-span-2">
-          <Card className="rounded-3xl py-5 shadow-none">
-            <CardContent className="px-4 sm:px-5">
-              <BarChart3 className="size-5 text-primary" />
-              <p className="mt-3 text-xs font-bold text-muted-foreground">
-                直近30日
-              </p>
-              <p className="mt-1 text-xl font-black">
-                {summary.workoutCount30d}回 / {summary.trainingDayCount30d}日
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                週平均 {summary.weeklyAverageWorkoutCount}回
-              </p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-3xl py-5 shadow-none">
-            <CardContent className="px-4 sm:px-5">
-              <Activity className="size-5 text-primary" />
-              <p className="mt-3 text-xs font-bold text-muted-foreground">
-                直近7日
-              </p>
-              <p className="mt-1 text-xl font-black">
-                {summary.workingSetCount7d} sets
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                完了したworking set
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+        {showPeriodMetrics && (
+          <div className="grid grid-cols-2 gap-3 lg:col-span-2">
+            <Card className="rounded-3xl py-5 shadow-none">
+              <CardContent className="px-4 sm:px-5">
+                <BarChart3 className="size-5 text-primary" />
+                <p className="mt-3 text-xs font-bold text-muted-foreground">
+                  直近30日
+                </p>
+                <p className="mt-1 text-xl font-black">
+                  {summary.workoutCount30d}回 / {summary.trainingDayCount30d}日
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  週平均 {summary.weeklyAverageWorkoutCount}回
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="rounded-3xl py-5 shadow-none">
+              <CardContent className="px-4 sm:px-5">
+                <Activity className="size-5 text-primary" />
+                <p className="mt-3 text-xs font-bold text-muted-foreground">
+                  直近7日
+                </p>
+                <p className="mt-1 text-xl font-black">
+                  {summary.workingSetCount7d} sets
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  完了したworking set
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </section>
   );

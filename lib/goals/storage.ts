@@ -52,6 +52,8 @@ export function saveGoal(
   const next = [...goals.filter((g) => g.id !== goal.id), goal];
   if (next.length > 500) throw new Error('目標は500件まで保存できます');
   storage.setItem(GOALS_KEY, serializeGoals(next));
+  if (typeof window !== 'undefined')
+    window.dispatchEvent(new Event('repwise-goals-change'));
   return next;
 }
 export function mergeGoals(
@@ -76,5 +78,7 @@ export function mergeGoals(
   if (merged.size > 500) throw new Error('目標は500件まで保存できます');
   const result = [...merged.values()];
   storage.setItem(GOALS_KEY, serializeGoals(result));
+  if (typeof window !== 'undefined')
+    window.dispatchEvent(new Event('repwise-goals-change'));
   return result;
 }

@@ -18,6 +18,7 @@ export const PRIMARY_NAVIGATION = [
   { key: 'home', href: APP_ROUTES.home, label: 'ホーム' },
   { key: 'newWorkout', href: APP_ROUTES.newWorkout, label: '記録する' },
   { key: 'history', href: APP_ROUTES.history, label: '履歴' },
+  { key: 'goals', href: APP_ROUTES.goals, label: '目標設定' },
   { key: 'settings', href: APP_ROUTES.settings, label: '設定' },
 ] as const;
 

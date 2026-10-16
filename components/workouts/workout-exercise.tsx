@@ -1,5 +1,6 @@
 'use client';
 
+import { WorkoutGoalProgress } from '@/components/goals/goal-progress-summary';
 import { useEffect, useRef, useState } from 'react';
 import { prepareExerciseCompletion } from '@/lib/workouts/completion';
 import { reportInvalidWorkoutInput } from './validated-number-input';
@@ -156,6 +157,7 @@ export function WorkoutExercise({
         </div>
       </div>
       {nextSet && <a className="flex min-h-11 items-center justify-center rounded-xl bg-primary/10 px-3 text-sm font-bold text-primary" href={`#workout-set-${nextSet.id}`}>次に取り組む SET {nextSet.position + 1} へ</a>}
+      <WorkoutGoalProgress exercise={exercise} localDate={localDate} workoutId={workoutId} />
       <ExerciseProgression
         exercise={exercise}
         state={progression}

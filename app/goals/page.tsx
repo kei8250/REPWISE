@@ -15,7 +15,7 @@ export default function GoalsPage() {
         <p className="mt-2 text-xs font-bold tracking-widest text-primary">
           GOALS
         </p>
-        <h1 className="mt-1 text-2xl font-black">目標と進捗</h1>
+        <h1 className="mt-1 text-2xl font-black">目標設定</h1>
       </header>
       <GoalsDashboard />
     </AppShell>

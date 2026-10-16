@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type SubmitEvent } from 'react';
+import { useEffect, useState, useRef, type SubmitEvent } from 'react';
 import { listExerciseMasters, getAnalytics } from '@/lib/workouts/api-client';
 import type { ExerciseMaster } from '@/lib/workouts/types';
 import type { AnalyticsSnapshot } from '@/lib/analytics/model';
@@ -11,6 +11,7 @@ import {
   goalProgress,
   localToday,
   type TrainingGoal,
+  validateGoal,
 } from '@/lib/goals/model';
 import {
   GOALS_KEY,
@@ -96,10 +97,11 @@ export function GoalsDashboard() {
       );
       setEditing(null);
       setError('');
-      return true;
+      return null;
     } catch (e) {
-      setError(e instanceof Error ? e.message : '保存できませんでした');
-      return false;
+      const message = e instanceof Error ? e.message : '保存できませんでした';
+      setError(message);
+      return message;
     }
   };
   const parts = [...new Set(goals.map((g) => g.bodyPart || 'その他'))];
@@ -458,7 +460,7 @@ function GoalForm({
   exercises: ExerciseMaster[];
   analytics: AnalyticsSnapshot;
   today: string;
-  onSave: (goal: TrainingGoal, previous?: string) => boolean;
+  onSave: (goal: TrainingGoal, previous?: string) => string | null;
   onCancel: () => void;
 }) {
   const [exerciseId, setExerciseId] = useState(
@@ -483,6 +485,19 @@ function GoalForm({
   );
   const [deadline, setDeadline] = useState(
     goal?.deadline ?? addMonths(today, 3),
+  );
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  const [selectedMonths, setSelectedMonths] = useState<number | null>(() =>
+    goal
+      ? ([3, 6, 12].find(
+          (m) => addMonths(goal.startDate, m) === goal.deadline,
+        ) ?? null)
+      : 3,
   );
   const [note, setNote] = useState(goal?.note ?? '');
   const [formError, setFormError] = useState('');
@@ -509,165 +524,188 @@ function GoalForm({
       note,
       updatedAt: new Date().toISOString(),
     };
-    onSave(next, goal?.updatedAt);
+    try {
+      validateGoal(next);
+      const error = onSave(next, goal?.updatedAt);
+      if (error) setFormError(error);
+    } catch (error) {
+      setFormError(
+        error instanceof Error ? error.message : '入力を確認してください',
+      );
+    }
   };
   return (
-    <Card className="rounded-3xl border-primary/40 shadow-none">
-      <CardContent className="pt-5">
-        <form onSubmit={submit} className="space-y-4">
-          <h2 className="text-lg font-black">
-            {goal ? '目標を編集' : '新しい目標'}
-          </h2>
-          {formError && <p role="alert">{formError}</p>}
-          <label className="block text-sm font-bold">
-            種目
-            <select
-              className={field}
-              value={exerciseId}
-              disabled={!!goal}
-              required
-              onChange={(e) => {
-                setExerciseId(e.target.value);
-                const baseline =
-                  best(e.target.value, Number(reps))?.loadGrams ?? 0;
-                setStart(String(baseline / 1000));
-                setWeight(String((baseline + 10000) / 1000));
-              }}
-            >
-              {goal && !exercises.some((e) => e.id === goal.exerciseId) && (
-                <option value={goal.exerciseId}>{goal.exerciseName}</option>
-              )}
-              {exercises.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="grid grid-cols-2 gap-3">
+    <dialog
+      ref={dialog}
+      aria-labelledby="goal-editor-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+      className="fixed inset-0 m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto rounded-3xl bg-background p-0 text-foreground shadow-xl backdrop:bg-black/40"
+    >
+      <Card className="rounded-3xl border-primary/40 shadow-none">
+        <CardContent className="pt-5">
+          <form onSubmit={submit} className="space-y-4">
+            <h2 id="goal-editor-title" className="text-lg font-black">
+              {goal ? '目標を編集' : '新しい目標'}
+            </h2>
+            {formError && <p role="alert">{formError}</p>}
             <label className="block text-sm font-bold">
-              目標重量（kg）
-              <input
+              種目
+              <select
                 className={field}
-                type="number"
-                min="0.001"
-                max="2000"
-                step="0.001"
-                value={weight}
-                required
-                onChange={(e) => setWeight(e.target.value)}
-              />
-            </label>
-            <label className="block text-sm font-bold">
-              その重量での目標回数
-              <input
-                className={field}
-                type="number"
-                min="1"
-                max="100"
-                step="1"
-                value={reps}
+                value={exerciseId}
+                disabled={!!goal}
                 required
                 onChange={(e) => {
-                  setReps(e.target.value);
-                  if (!goal)
-                    setStart(
-                      String(
-                        (best(exerciseId, Number(e.target.value))?.loadGrams ??
-                          0) / 1000,
-                      ),
-                    );
+                  setExerciseId(e.target.value);
+                  const baseline =
+                    best(e.target.value, Number(reps))?.loadGrams ?? 0;
+                  setStart(String(baseline / 1000));
+                  setWeight(String((baseline + 10000) / 1000));
                 }}
-              />
+              >
+                {goal && !exercises.some((e) => e.id === goal.exerciseId) && (
+                  <option value={goal.exerciseId}>{goal.exerciseName}</option>
+                )}
+                {exercises.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
             </label>
-          </div>
-          <div>
-            <p className="text-sm font-bold">いつまでに？</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {[3, 6, 12].map((months) => (
-                <button
-                  type="button"
-                  className={button}
-                  key={months}
-                  onClick={() =>
-                    setDeadline(addMonths(goal?.startDate ?? today, months))
-                  }
-                >
-                  {months === 12 ? '1年' : months === 6 ? '半年' : '3か月'}
-                </button>
-              ))}
-            </div>
-            <label className="mt-3 block text-sm">
-              期限
-              <input
-                className={field}
-                type="date"
-                value={deadline}
-                required
-                min={addMonths(goal?.startDate ?? today, 0)}
-                onChange={(e) => setDeadline(e.target.value)}
-              />
-            </label>
-          </div>
-          <details>
-            <summary className="cursor-pointer py-2 text-sm font-bold">
-              開始値・増量幅・メモを調整
-            </summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="text-sm">
-                開始重量（{reps || '—'}回できる重量・kg）
-                <input
-                  className={field}
-                  type="number"
-                  min="0"
-                  max="2000"
-                  step="0.001"
-                  value={start}
-                  required
-                  onChange={(e) => setStart(e.target.value)}
-                />
-              </label>
-              <label className="text-sm">
-                1段階の増量幅（kg）
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm font-bold">
+                目標重量（kg）
                 <input
                   className={field}
                   type="number"
                   min="0.001"
-                  max="100"
+                  max="2000"
                   step="0.001"
-                  value={increment}
+                  value={weight}
                   required
-                  onChange={(e) => setIncrement(e.target.value)}
+                  onChange={(e) => setWeight(e.target.value)}
+                />
+              </label>
+              <label className="block text-sm font-bold">
+                その重量での目標回数
+                <input
+                  className={field}
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={reps}
+                  required
+                  onChange={(e) => {
+                    setReps(e.target.value);
+                    if (!goal)
+                      setStart(
+                        String(
+                          (best(exerciseId, Number(e.target.value))
+                            ?.loadGrams ?? 0) / 1000,
+                        ),
+                      );
+                  }}
                 />
               </label>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              開始値には目標回数以上の過去最高重量を仮入力します。該当記録がなければ0kgです。重量は片側1回分で指定してください。開始日は
-              {goal?.startDate ?? today}です。
-            </p>
-            <label className="mt-3 block text-sm">
-              目標の理由・メモ
-              <textarea
-                className={field}
-                maxLength={500}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-            </label>
-          </details>
-          <div className="flex gap-2">
-            <button
-              className={`${button} bg-primary text-primary-foreground`}
-              type="submit"
-            >
-              目標を保存
-            </button>
-            <button className={button} type="button" onClick={onCancel}>
-              キャンセル
-            </button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+            <div>
+              <p className="text-sm font-bold">いつまでに？</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[3, 6, 12].map((months) => (
+                  <button
+                    type="button"
+                    className={button}
+                    key={months}
+                    aria-pressed={selectedMonths === months}
+                    onClick={() => {
+                      setSelectedMonths(months);
+                      setDeadline(addMonths(goal?.startDate ?? today, months));
+                    }}
+                  >
+                    {months === 12 ? '1年' : months === 6 ? '半年' : '3か月'}
+                  </button>
+                ))}
+              </div>
+              <label className="mt-3 block text-sm">
+                期限
+                <input
+                  className={field}
+                  type="date"
+                  value={deadline}
+                  required
+                  min={addMonths(goal?.startDate ?? today, 0)}
+                  onChange={(e) => {
+                    setDeadline(e.target.value);
+                    setSelectedMonths(null);
+                  }}
+                />
+              </label>
+            </div>
+            <details>
+              <summary className="cursor-pointer py-2 text-sm font-bold">
+                開始値・増量幅・メモを調整
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-sm">
+                  開始重量（{reps || '—'}回できる重量・kg）
+                  <input
+                    className={field}
+                    type="number"
+                    min="0"
+                    max="2000"
+                    step="0.001"
+                    value={start}
+                    required
+                    onChange={(e) => setStart(e.target.value)}
+                  />
+                </label>
+                <label className="text-sm">
+                  1段階の増量幅（kg）
+                  <input
+                    className={field}
+                    type="number"
+                    min="0.001"
+                    max="100"
+                    step="0.001"
+                    value={increment}
+                    required
+                    onChange={(e) => setIncrement(e.target.value)}
+                  />
+                </label>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                開始値には目標回数以上の過去最高重量を仮入力します。該当記録がなければ0kgです。重量は片側1回分で指定してください。開始日は
+                {goal?.startDate ?? today}です。
+              </p>
+              <label className="mt-3 block text-sm">
+                目標の理由・メモ
+                <textarea
+                  className={field}
+                  maxLength={500}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </label>
+            </details>
+            <div className="flex gap-2">
+              <button
+                className={`${button} bg-primary text-primary-foreground`}
+                type="submit"
+              >
+                目標を保存
+              </button>
+              <button className={button} type="button" onClick={onCancel}>
+                キャンセル
+              </button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </dialog>
   );
 }

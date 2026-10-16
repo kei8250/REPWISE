@@ -14,6 +14,9 @@ import type {
 } from '@/lib/workouts/types';
 import { summarizeSyncQueue } from '@/lib/workouts/sync-overview';
 import { LoadBasisSelect } from '@/components/workouts/load-basis-select';
+import { WorkoutSummaryList } from '@/components/workouts/workout-summary-list';
+import { deleteWorkoutRecord } from '@/lib/workouts/draft-deletion';
+import { syncAutomatically } from '@/lib/workouts/sync-timing';
 import { WorkoutSyncList } from './workout-sync-list';
 
 function subscribeSettings(update: () => void) {
@@ -133,6 +136,17 @@ export function SettingsDashboard() {
       setBusy(null);
     }
   };
+  const removeRecord = async (id: string) => {
+    const draft = local?.drafts.find(item => item.workoutId === id);
+    if (!window.confirm(`「${draft?.workout.name ?? 'この記録'}」を削除しますか？`)) return;
+    setBusy(id);
+    try {
+      await deleteWorkoutRecord(id);
+      setNotice('記録を削除しました。');
+      void syncAutomatically(id).catch(() => undefined);
+    } catch (cause) { setNotice(cause instanceof Error ? cause.message : '削除できませんでした。'); }
+    finally { await refreshLocal(); setBusy(null); }
+  };
   const recoverRecord = async (id: string) => {
     setBusy(id);
     setNotice(null);
@@ -143,8 +157,8 @@ export function SettingsDashboard() {
       if (!draft) throw new Error('読めない形式の記録です。端末の記録を書き出して個別の確認が必要です。');
       const { workout: server } = await getWorkoutSyncState(id);
       if (draft.draftStatus === 'deleted') {
-        const serverLabel = server ? `サーバー：${server.name}（${server.localDate}・version ${server.version}・${server.deletedAt ? '削除済み' : server.status === 'completed' ? '完了済み' : '入力途中'}）` : 'サーバーに記録がありません。';
-        if (!window.confirm(`${draft.workout.name} を個別復旧します。\n${serverLabel}\n元の端末データは原本として保護します。古い未送信の編集は送らず、サーバーの最新記録に削除を反映します。続けますか？`)) return;
+        if (!server) throw new Error('接続先に記録を確認できませんでした。記録を保護したまま、時間をおいて再確認します。');
+        if (!window.confirm(`「${server.name}」の削除を完了しますか？別の端末で更新された内容も含めて削除します。`)) return;
         await reconcileDeletedWorkout(id, server, { draft, mutations: data.mutations.filter((item) => item.workoutId === id) });
         const result = await syncPendingWorkoutMutations(id);
         setNotice(result.failed ? `原本は保護済みです。${result.failed.lastError}` : '削除の復旧が完了しました。原本は書き出しに含まれます。');
@@ -193,7 +207,97 @@ export function SettingsDashboard() {
   const unconfirmedDeletions = local?.drafts.filter((draft) => draft.draftStatus === 'deleted' && !draft.deletionConfirmedAt && !local.mutations.some((item) => item.workoutId === draft.workoutId)) ?? [];
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-7">
+      <details className="rounded-3xl border bg-card p-5">
+        <summary className="min-h-11 cursor-pointer py-3 text-lg font-black">不要な記録を整理</summary>
+        <p className="mt-2 mb-4 text-sm text-muted-foreground">不要な入力途中の記録を削除できます。「…」または左へスワイプで削除を選べます。変更の反映は自動で行います。</p>
+        <WorkoutSummaryList status="active" emptyMessage="入力途中の記録はありません" />
+        {queueEntries.filter(entry => ['blocked', 'conflict'].includes(entry.head.syncStatus)).map(entry => (
+          <div key={entry.id} className="mt-3 rounded-xl border p-3">
+            <p className="break-words font-bold">{entry.draft?.workout.name ?? '確認が必要な記録'}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{entry.deleted ? '記録は一覧から削除されています。自動で処理できない変更があるため、削除を確認してください。' : entry.head.lastError?.includes('HTTP 401') || entry.head.lastError?.includes('HTTP 403') ? 'ログイン状態を確認してください。記録は保護されています。' : entry.head.syncStatus === 'conflict' ? '別の端末で変更されています。必要な記録か確認してください。' : '古い入力内容に問題があります。不要ならそのまま削除できます。'}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {!entry.deleted && <Button variant="destructive" className="min-h-11" disabled={busy !== null} onClick={() => void removeRecord(entry.id)}>この記録を削除</Button>}
+              {entry.deleted && <Button variant="outline" className="min-h-11" disabled={busy !== null} onClick={() => void recoverRecord(entry.id)}>削除を完了</Button>}
+            </div>
+          </div>
+        ))}
+        {notice && <output className="mt-3 block text-sm">{notice}</output>}
+      </details>
       <section className="rounded-3xl border bg-card p-5">
+        <h2 className="text-lg font-black">種目の設定</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          種目名・部位・初期セット数・回数の目安を変更できます。過去の記録はその時の名前を残し、新しく追加する種目へ反映します。
+        </p>
+        {loading ? (
+          <p className="mt-4 text-sm">種目を読み込み中…</p>
+        ) : masterError ? (
+          <div className="mt-4">
+            <p role="alert" className="text-sm text-destructive">
+              {masterError}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              onClick={() => void retryCatalog()}
+            >
+              再試行
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Input
+              aria-label="設定する種目を検索"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="種目名で検索"
+              className="mt-4 h-11 text-base"
+            />
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+              {items
+                .filter((item) =>
+                  item.name
+                    .toLocaleLowerCase('ja-JP')
+                    .includes(query.toLocaleLowerCase('ja-JP')),
+                )
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-pressed={selected === item.id}
+                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left text-sm ${selected === item.id ? 'border-primary bg-primary/5' : ''}`}
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <span className="font-bold">{item.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {item.bodyPart}
+                    </span>
+                  </button>
+                ))}
+              {!items.length && (
+                <p className="text-sm text-muted-foreground">
+                  種目は記録画面から追加できます。
+                </p>
+              )}
+            </div>
+            {exercise && (
+              <ExerciseSettingsEditor
+                key={exercise.id}
+                exercise={exercise}
+                onSaved={(updated) =>
+                  setItems((previous) =>
+                    previous.map((item) =>
+                      item.id === updated.id ? updated : item,
+                    ),
+                  )
+                }
+              />
+            )}
+          </>
+        )}
+      </section>
+      <details className="rounded-3xl border bg-card p-5">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-bold">詳細・トラブルシューティング</summary>
         <h2 className="text-lg font-black">保存と同期</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           入力内容はすぐにこの端末へ保存し、入力が止まってからまとめて同期します。
@@ -273,80 +377,7 @@ export function SettingsDashboard() {
         {notice && (
           <output className="mt-3 block text-sm font-bold">{notice}</output>
         )}
-      </section>
-      <section className="rounded-3xl border bg-card p-5">
-        <h2 className="text-lg font-black">種目の設定</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          種目名・部位・初期セット数・回数の目安を変更できます。過去の記録はその時の名前を残し、新しく追加する種目へ反映します。
-        </p>
-        {loading ? (
-          <p className="mt-4 text-sm">種目を読み込み中…</p>
-        ) : masterError ? (
-          <div className="mt-4">
-            <p role="alert" className="text-sm text-destructive">
-              {masterError}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-3"
-              onClick={() => void retryCatalog()}
-            >
-              再試行
-            </Button>
-          </div>
-        ) : (
-          <>
-            <Input
-              aria-label="設定する種目を検索"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="種目名で検索"
-              className="mt-4"
-            />
-            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
-              {items
-                .filter((item) =>
-                  item.name
-                    .toLocaleLowerCase('ja-JP')
-                    .includes(query.toLocaleLowerCase('ja-JP')),
-                )
-                .map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-pressed={selected === item.id}
-                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-3 text-left text-sm ${selected === item.id ? 'border-primary bg-primary/5' : ''}`}
-                    onClick={() => setSelected(item.id)}
-                  >
-                    <span className="font-bold">{item.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {item.bodyPart}
-                    </span>
-                  </button>
-                ))}
-              {!items.length && (
-                <p className="text-sm text-muted-foreground">
-                  種目は記録画面から追加できます。
-                </p>
-              )}
-            </div>
-            {exercise && (
-              <ExerciseSettingsEditor
-                key={exercise.id}
-                exercise={exercise}
-                onSaved={(updated) =>
-                  setItems((previous) =>
-                    previous.map((item) =>
-                      item.id === updated.id ? updated : item,
-                    ),
-                  )
-                }
-              />
-            )}
-          </>
-        )}
-      </section>
+      </details>
     </div>
   );
 }
@@ -393,7 +424,7 @@ function ExerciseSettingsEditor({
           maxLength={80}
           required
           onChange={(event) => setValue({ ...value, name: event.target.value })}
-          className="mt-1"
+          className="mt-1 h-11 text-base"
         />
       </div>
       <div>
@@ -429,8 +460,8 @@ function ExerciseSettingsEditor({
               min: 1,
               max: 30,
             },
-            { key: 'defaultRepMin', label: 'rep下限', min: 1, max: 999 },
-            { key: 'defaultRepMax', label: 'rep上限', min: 1, max: 999 },
+            { key: 'defaultRepMin', label: '目標回数の下限（回）', min: 1, max: 999 },
+            { key: 'defaultRepMax', label: '目標回数の上限（回）', min: 1, max: 999 },
             {
               key: 'defaultRestSeconds',
               label: '休憩の目安（秒）',
@@ -462,7 +493,7 @@ function ExerciseSettingsEditor({
                   return next;
                 })
               }
-              className="mt-1"
+              className="mt-1 h-11 text-base"
             />
           </div>
         ))}
@@ -490,7 +521,7 @@ function ExerciseSettingsEditor({
                     : Math.round(Number(event.target.value) * 1000),
               })
             }
-            className="mt-1"
+            className="mt-1 h-11 text-base"
           />
         </div>
       </div>

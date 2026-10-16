@@ -1,3 +1,4 @@
+import { recoverPendingDeletion } from './deletion-recovery';
 import { listWorkoutMutations } from './local-drafts';
 import {
   syncPendingWorkoutMutations,
@@ -56,7 +57,8 @@ export function nextAutomaticSyncDelay(
 export async function syncAutomatically(
   workoutId: string,
 ): Promise<WorkoutSyncResult> {
-  const mutations = await listWorkoutMutations(workoutId);
+  let mutations = await listWorkoutMutations(workoutId);
+  if (mutations[0]?.syncStatus === 'blocked' && await recoverPendingDeletion(workoutId).catch(() => false)) mutations = await listWorkoutMutations(workoutId);
   const delay = nextAutomaticSyncDelay(workoutId, mutations);
   if (delay === null || delay > 0)
     return {
@@ -64,5 +66,7 @@ export async function syncAutomatically(
       remaining: mutations.length,
       failed: mutations.find((item) => item.syncStatus !== 'pending') ?? null,
     };
-  return syncPendingWorkoutMutations(workoutId);
+  const result = await syncPendingWorkoutMutations(workoutId);
+  if (result.failed?.syncStatus === 'blocked' && await recoverPendingDeletion(workoutId).catch(() => false)) return syncPendingWorkoutMutations(workoutId);
+  return result;
 }

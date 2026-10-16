@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // Use a dedicated Chromium profile. Every app API is intercepted with synthetic data.
 // This script never navigates to the public site or uses a real database.
+const simpleSettings = process.argv.includes('--simple-settings');
 const reviewUx = process.argv.includes('--review-ux');
 const legacySyncReview = process.argv.includes('--legacy-sync');
 const stateProgressReview = process.argv.includes('--state-progress');
@@ -31,7 +32,7 @@ let posts = 0;
 const server = new Map();
 const processed = new Map();
 const fixturesDir = process.env.REPWISE_REVIEW_OUTPUT_DIR ?? fileURLToPath(
-  new URL(reviewUx ? '../docs/reviews/reference-review-ux/' : legacySyncReview ? '../docs/reviews/legacy-sync-recovery/' : stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
+  new URL(simpleSettings ? '../docs/reviews/simple-settings/' : reviewUx ? '../docs/reviews/reference-review-ux/' : legacySyncReview ? '../docs/reviews/legacy-sync-recovery/' : stateProgressReview ? '../docs/reviews/workout-state-progress/' : navigationReview ? '../docs/reviews/workout-navigation/' : '../docs/reviews/draft-cleanup-side-reps/', import.meta.url),
 );
 let master = {
   id: 'ex-bench-press',
@@ -519,7 +520,7 @@ const evalJs = async (expression) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(expression) {
   for (let i = 0; i < 250; i++) {
-    if (await evalJs(`Boolean(document.body) && Boolean(${expression})`))
+    if (await evalJs(`(async () => Boolean(document.body) && Boolean(await (${expression})))()`))
       return;
     await pause(100);
   }
@@ -590,7 +591,10 @@ async function select(selector, value) {
 }
 try {
 await send('Emulation.setTouchEmulationEnabled', { enabled: true });
-if (reviewUx) {
+if (simpleSettings) {
+  const { reviewSimpleSettings } = await import('./review-simple-settings.mjs');
+  await reviewSimpleSettings({ evalJs, go, reload, until, tap, type, select, clickText, shot, setViewport, overflow, check, server, fixtureWorkout, fixturesDir, setOnline: value => { online = value; } });
+} else if (reviewUx) {
   const { reviewReferenceUx } = await import('./review-reference-ux.mjs');
   await reviewReferenceUx({ evalJs, go, reload, until, tap, clickText, shot, setViewport, overflow, check, fixturesDir, setOnline: value => { online = value; } });
 } else if (legacySyncReview) {
@@ -737,7 +741,7 @@ await until(
 const activeId = await evalJs("location.pathname.split('/').at(-1)");
 await clickText('種目を追加');
 await until("document.querySelector('#new-exercise-rep-mode')");
-await type('input[placeholder="種目名"]', 'ブルガリアンテスト');
+await type('#new-exercise-name', 'ブルガリアンテスト');
 await select('#new-exercise-rep-mode', 'per_side');
 await shot(`${fixturesDir}/create-side-390.png`);
 await clickText('作成して追加');

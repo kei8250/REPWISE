@@ -24,6 +24,7 @@ export type LocalDraftStatus =
   | 'deleted';
 
 export interface LocalWorkoutDraft {
+  automaticDeletionRepairVersion?: number;
   deletionConfirmedAt?: string;
   editBaseline?: Workout;
   workoutId: string;
@@ -1055,6 +1056,7 @@ export async function reconcileDeletedWorkout(
   server: Workout | null,
   expected: { draft: LocalWorkoutDraft; mutations: WorkoutMutation[] },
   databaseName = LOCAL_DRAFT_DATABASE_NAME,
+  automatic = false,
 ) {
   const database = await openDatabase(databaseName);
   const transaction = database.transaction([LOCAL_DRAFT_STORE_NAME, WORKOUT_MUTATION_STORE_NAME, SYNC_RECOVERY_STORE_NAME], 'readwrite');
@@ -1069,12 +1071,13 @@ export async function reconcileDeletedWorkout(
       (mutations.length > 0 && mutations.at(-1)?.operation !== 'delete') ||
       mutations.some((item) => item.syncStatus === 'syncing') || (server && server.id !== workoutId) ||
       !server ||
+      (automatic && current.automaticDeletionRepairVersion !== undefined) ||
       (server?.deletedAt && mutations.some((item) => (item.retryCount > 0 || item.lastAttemptAt) && item.baseVersion >= server.version))) {
     await complete;
     throw new Error('削除状態が変更されたか、判断できない変更があります。再読み込みして原本を確認してください。');
   }
   transaction.objectStore(SYNC_RECOVERY_STORE_NAME).put({
-    id: crypto.randomUUID(), reason: 'explicit-delete-reconciliation', recoveredAt: new Date().toISOString(), draft: current, mutations, server,
+    id: crypto.randomUUID(), reason: automatic ? 'automatic-delete-reconciliation' : 'explicit-delete-reconciliation', recoveredAt: new Date().toISOString(), draft: current, mutations, server,
   });
   for (const item of mutations) queue.delete(item.mutationId);
   if (server && !server.deletedAt) {
@@ -1083,10 +1086,10 @@ export async function reconcileDeletedWorkout(
     const last = await requestResult(queue.index('sequence').openCursor(IDBKeyRange.bound(0, Number.MAX_SAFE_INTEGER - 1), 'prev'));
     mutation.sequence = Math.max(mutation.sequence, Number(last?.key ?? 0) + 1);
     queue.put(mutation);
-    drafts.put({ ...current, localUpdatedAt: mutation.createdAt, serverVersion: server.version });
+    drafts.put({ ...current, ...(automatic ? { automaticDeletionRepairVersion: server.version } : {}), localUpdatedAt: mutation.createdAt, serverVersion: server.version });
   } else {
     // An existing server tombstone needs no new mutation. Keep local tombstone.
-    drafts.put({ ...current, serverVersion: server.version, serverUpdatedAt: server.updatedAt, deletionConfirmedAt: new Date().toISOString() });
+    drafts.put({ ...current, ...(automatic ? { automaticDeletionRepairVersion: server.version } : {}), serverVersion: server.version, serverUpdatedAt: server.updatedAt, deletionConfirmedAt: new Date().toISOString() });
   }
   await complete;
   notifyQueueChanged();

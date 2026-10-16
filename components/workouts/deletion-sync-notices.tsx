@@ -123,6 +123,7 @@ export function DeletionSyncNotices({
               「{draft.workout.name}」
               {isDeleted ? 'を削除しました' : 'の削除を取り消しました'}
             </p>
+            <details className="mt-1 text-xs"><summary className="min-h-11 cursor-pointer py-3 text-muted-foreground">削除の詳細</summary>
             <p className="mt-1 text-xs font-bold">
               {isDeleted
                 ? label
@@ -137,6 +138,7 @@ export function DeletionSyncNotices({
                 {head.lastError}
               </p>
             )}
+            </details>
             <div className="mt-2 flex flex-wrap gap-2">
               {isDeleted && !head && !draft.deletionConfirmedAt && <a href={APP_ROUTES.settings} className="min-h-11 py-3 text-sm font-bold text-primary">設定で削除状態を確認</a>}
               {head?.syncStatus === 'conflict' ? (
@@ -147,7 +149,7 @@ export function DeletionSyncNotices({
                   設定で競合を確認
                 </a>
               ) : (
-                head &&
+                head && failed &&
                 head.syncStatus !== 'syncing' && (
                   <Button
                     type="button"

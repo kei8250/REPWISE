@@ -11,6 +11,9 @@ import {
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { loadVisibleWorkouts, mergeVisibleWorkouts } from '@/lib/workouts/visible-workouts';
 import { getAnalytics } from '@/lib/workouts/api-client';
+import { syncAutomatically } from '@/lib/workouts/sync-timing';
+import { recoverPendingDeletion } from '@/lib/workouts/deletion-recovery';
+import { deleteWorkoutRecord } from '@/lib/workouts/draft-deletion';
 import type { Workout, WorkoutMutation } from '@/lib/workouts/types';
 
 const time = '2026-10-15T12:00:00.000Z';
@@ -236,5 +239,88 @@ describe('persisted legacy queue recovery without clearing user data', () => {
     await getAnalytics('30d', fetcher);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[1]?.[0]).toContain('exclude=legacy');
+  });
+});
+
+
+describe('delete intent recovers without making users inspect queues', () => {
+  it('不要な入力途中を削除すると、古い400更新を原本に残しサーバーsnapshotで削除だけを作る', async () => {
+    await saveActiveWorkoutDraft(workout(), { serverUpdatedAt: time });
+    const { mutation } = await saveWorkoutDraftAndEnqueueMutation({ ...workout(), overallNote: '古い未送信のメモ' }, 'replace');
+    await updateWorkoutMutation(mutation.mutationId, { syncStatus: 'blocked', retryCount: 1, lastError: '入力不正（HTTP 400）' });
+    await deleteWorkoutRecord('legacy');
+    await saveWorkoutDraftAndEnqueueMutation(workout('healthy'), 'create');
+    const healthy = await snapshot('healthy');
+    expect(await recoverPendingDeletion('legacy', { fetcher: async () => Response.json({ workout: workout() }) })).toBe(true);
+    const queue = await listWorkoutMutations('legacy');
+    expect(queue).toEqual([expect.objectContaining({ operation: 'delete', baseVersion: 1, payload: { workout: expect.objectContaining({ overallNote: '未同期のメモを保護' }) } })]);
+    expect((await exportWorkoutRecoveryData()).recoveryArchive).toContainEqual(expect.objectContaining({ reason: 'automatic-delete-reconciliation', mutations: expect.arrayContaining([expect.objectContaining({ mutationId: mutation.mutationId, payload: { workout: expect.objectContaining({ overallNote: '古い未送信のメモ' }) } })]) }));
+    expect(await snapshot('healthy')).toEqual(healthy);
+    await syncPendingWorkoutMutations('legacy', { fetcher: async () => Response.json({ mutationId: queue[0].mutationId, duplicate: false, workout: { ...workout(), version: 2, deletedAt: time } }) });
+    expect(await listWorkoutMutations('legacy')).toEqual([]);
+  });
+  it('通常の自動同期だけで400更新の後ろの削除まで完了する', async () => {
+    await saveActiveWorkoutDraft(workout(), { serverUpdatedAt: time });
+    await saveWorkoutDraftAndEnqueueMutation(workout(), 'replace');
+    await deleteWorkoutRecord('legacy');
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof url !== 'string') throw new Error('Expected fixture URL');
+      if (url.endsWith('/sync-state')) return Response.json({ workout: workout() });
+      if (typeof init?.body !== 'string') throw new Error('Expected JSON body');
+      const mutation = JSON.parse(init.body);
+      calls.push(mutation.operation);
+      if (mutation.operation === 'replace') return Response.json({ error: '古い入力不正' }, { status: 400 });
+      return Response.json({ mutationId: mutation.mutationId, duplicate: false, workout: { ...workout(), version: 2, deletedAt: time } });
+    });
+    try {
+      expect(await syncAutomatically('legacy')).toMatchObject({ remaining: 0, failed: null });
+      expect(calls).toEqual(['replace', 'delete']);
+      expect(await listWorkoutMutations('legacy')).toEqual([]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('サーバーが別の端末で進んでいれば自動で削除しない', async () => {
+    await oldDelete();
+    const before = await snapshot();
+    expect(await recoverPendingDeletion('legacy', { fetcher: async () => Response.json({ workout: { ...workout(), version: 10 } }) })).toBe(false);
+    expect(await snapshot()).toEqual(before);
+  });
+  it('旧サーバーが削除自体を400にしても、削除要求の作り直しを繰り返さない', async () => {
+    await oldDelete();
+    const fetcher = vi.fn(async () => Response.json({ workout: workout() }));
+    expect(await recoverPendingDeletion('legacy', { fetcher })).toBe(true);
+    const [mutation] = await listWorkoutMutations('legacy');
+    await updateWorkoutMutation(mutation.mutationId, { syncStatus: 'blocked', retryCount: 1, lastError: '旧API（HTTP 400）' });
+    await closeLocalDraftDatabase();
+    expect(await recoverPendingDeletion('legacy', { fetcher })).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((await exportWorkoutRecoveryData()).recoveryArchive).toHaveLength(1);
+  });
+  it('不存在・通信失敗では原本を保護して通常再試行に任せる', async () => {
+    await oldDelete();
+    const before = await snapshot();
+    expect(await recoverPendingDeletion('legacy', { fetcher: async () => Response.json({ workout: null }) })).toBe(false);
+    expect(await snapshot()).toEqual(before);
+    await expect(recoverPendingDeletion('legacy', { fetcher: async () => { throw new Error('offline'); } })).rejects.toThrow('offline');
+    expect(await snapshot()).toEqual(before);
+  });
+  it('照合中に取り消したら削除を復旧せず、最新の取り消しを保持する', async () => {
+    await oldDelete();
+    await expect(recoverPendingDeletion('legacy', { fetcher: async () => {
+      await saveWorkoutDraftAndEnqueueMutation(workout(), 'restore');
+      return Response.json({ workout: workout() });
+    } })).rejects.toThrow('削除状態');
+    expect((await getLocalWorkoutDraft('legacy'))?.draftStatus).toBe('active');
+    expect((await listWorkoutMutations('legacy')).at(-1)?.operation).toBe('restore');
+  });
+  it('正常な未同期記録は自動復旧で破棄せず、完了済みの不要記録も設定から削除できる', async () => {
+    await saveWorkoutDraftAndEnqueueMutation(workout(), 'create');
+    const fetcher = vi.fn();
+    expect(await recoverPendingDeletion('legacy', { fetcher })).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+    const completed = { ...workout('completed'), status: 'completed' as const, endedAt: time };
+    await markLocalWorkoutDraftCompleted(completed);
+    await deleteWorkoutRecord(completed.id);
+    expect(await getLocalWorkoutDraft(completed.id)).toMatchObject({ draftStatus: 'deleted', workout: { status: 'completed', endedAt: time } });
   });
 });

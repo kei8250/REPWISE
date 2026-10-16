@@ -349,7 +349,7 @@ export async function reviewWorkoutStateProgress({
   await until(`document.querySelector('#new-exercise-rep-mode')`);
   await select('#new-exercise-rep-mode', 'per_side');
   await select('#new-exercise-load-basis', 'paired_total');
-  await type('input[placeholder="種目名"]', '重量基準の左右別テスト');
+  await type('#new-exercise-name', '重量基準の左右別テスト');
   await evalJs(
     `document.querySelector('#new-exercise-load-basis').scrollIntoView({block:'center'})`,
   );

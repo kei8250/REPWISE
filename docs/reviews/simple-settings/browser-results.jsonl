@@ -1,0 +1,16 @@
+{"check":"body_part_filters_exercise_and_updates_analysis_375","passed":true}
+{"check":"analytics_body_picker_no_horizontal_overflow_375","passed":true}
+{"check":"body_part_filters_exercise_and_updates_analysis_390","passed":true}
+{"check":"analytics_body_picker_no_horizontal_overflow_390","passed":true}
+{"check":"exercise_name_visible_in_full_width_multiline_field_375","passed":true}
+{"check":"exercise_creation_no_horizontal_overflow_375","passed":true}
+{"check":"exercise_name_visible_in_full_width_multiline_field_390","passed":true}
+{"check":"exercise_creation_no_horizontal_overflow_390","passed":true}
+{"check":"long_japanese_name_creates_exercise_without_truncating_value","passed":true}
+{"check":"settings_default_view_hides_sync_diagnostics","passed":true}
+{"check":"one_delete_action_resolves_legacy_blocked_update_and_server_delete_without_manual_recovery","passed":true}
+{"check":"automatic_cleanup_retains_original_unsynced_note","passed":true}
+{"check":"deleted_legacy_record_stays_absent_after_reload","passed":true}
+{"check":"simple_settings_no_horizontal_overflow_390","passed":true}
+{"check":"no_browser_exceptions","passed":true}
+{"browserExceptions":[],"fixtureSyncRequests":2}

@@ -20,7 +20,12 @@ export function SyncRecovery() {
         ),
       );
     };
-    const invalidate = () => { invalidateAnalyticsDetail(); invalidateHomeAnalyticsSummary(); };
+    let changeTimer: number | undefined;
+    const invalidate = () => {
+      invalidateAnalyticsDetail(); invalidateHomeAnalyticsSummary();
+      window.clearTimeout(changeTimer);
+      changeTimer = window.setTimeout(() => void recover(), 750);
+    };
     window.addEventListener('repwise-sync-queue-change', invalidate);
     void recover();
     const retryTimer = window.setInterval(() => void recover(), 30_000);
@@ -34,6 +39,7 @@ export function SyncRecovery() {
     window.addEventListener('storage', changed);
     return () => {
       active = false;
+      window.clearTimeout(changeTimer);
       window.removeEventListener('repwise-sync-queue-change', invalidate);
       window.clearInterval(retryTimer);
       window.removeEventListener('online', recover);

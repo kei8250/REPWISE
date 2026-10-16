@@ -39,3 +39,13 @@ export async function restoreDeletedWorkout(id: string, databaseName?: string) {
 }
 
 export const restoreActiveWorkout = restoreDeletedWorkout;
+
+export async function deleteWorkoutRecord(id: string, options: { databaseName?: string; fetcher?: FetchLike } = {}) {
+  const local = await getLocalWorkoutDraft(id, options.databaseName);
+  const current = local?.workout ?? await getWorkout(id, options.fetcher);
+  if (current.deletedAt) return current;
+  const timestamp = new Date().toISOString();
+  const deleted = { ...current, deletedAt: timestamp, updatedAt: timestamp };
+  await saveWorkoutDraftAndEnqueueMutation(deleted, 'delete', { databaseName: options.databaseName });
+  return deleted;
+}

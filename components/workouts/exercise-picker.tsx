@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import {
   createCachedExerciseMaster,
@@ -203,17 +204,14 @@ export function ExercisePicker({
               <option value="standard">通常 · 回数を1つ入力</option><option value="per_side">左右別 · 共通の重量と右・左の回数</option>
             </select>
             {newRepMode === 'per_side' && <div className="mb-3"><LoadBasisSelect id="new-exercise-load-basis" value={newLoadBasis} onChange={setNewLoadBasis} /></div>}
-            <div className="grid gap-2 sm:grid-cols-[1fr_130px_auto]">
-              <Input
-                value={newName}
-                onChange={(event) => setNewName(event.target.value)}
-                placeholder="種目名"
-                maxLength={80}
-              />
+            <label className="mb-2 block text-sm font-bold" htmlFor="new-exercise-name">種目名</label>
+            <Textarea id="new-exercise-name" value={newName} onChange={event => setNewName(event.target.value.replace(/[\r\n]/g, ''))} placeholder="種目名" maxLength={80} rows={3} className="mb-3 min-h-24 w-full resize-y bg-background text-base leading-relaxed" />
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <select
                 value={newBodyPart}
                 onChange={(event) => setNewBodyPart(event.target.value)}
-                className="h-9 rounded-lg border bg-background px-3 text-sm"
+                aria-label="新しい種目の部位"
+                className="h-11 min-w-0 rounded-lg border bg-background px-3 text-base"
               >
                 {bodyParts.map((part) => (
                   <option key={part}>{part}</option>
@@ -221,6 +219,7 @@ export function ExercisePicker({
               </select>
               <Button
                 type="button"
+                className="min-h-11"
                 disabled={loading || !newName.trim()}
                 onClick={() => void addCustomExercise()}
               >

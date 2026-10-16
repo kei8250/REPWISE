@@ -186,11 +186,18 @@ export function AnalyticsDataView({
 
   const exercises = sortExercisesByRecent(analytics.exercises);
   const bodyParts = analyticsBodyParts(exercises);
-  const statusExercises = filterAnalyticsExercises(exercises, bodyPartFilter);
+  const effectiveBodyPart = bodyParts.includes(bodyPartFilter) ? bodyPartFilter : ALL_BODY_PARTS;
+  const statusExercises = filterAnalyticsExercises(exercises, effectiveBodyPart);
   const selectedExercise = selectAnalyticsExercise(
     { ...analytics, exercises: statusExercises },
     selectedExerciseId,
   );
+  const chooseBodyPart = (bodyPart: string) => {
+    setBodyPartFilter(bodyPart);
+    const candidates = filterAnalyticsExercises(exercises, bodyPart);
+    const next = candidates.find(item => item.exerciseId === selectedExerciseId) ?? candidates[0];
+    if (next) onSelectExercise(next.exerciseId);
+  };
   const bodyPartMax = Math.max(
     1,
     ...analytics.bodyParts.map((part) => part.workingSetCount),
@@ -252,12 +259,19 @@ export function AnalyticsDataView({
                   種目分析
                 </h2>
               </div>
-              <label className="text-sm font-bold">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              <label className="min-w-0 text-sm font-bold">
+                <span className="mb-1.5 block text-muted-foreground">部位を選ぶ</span>
+                <NativeSelect className="w-full min-w-0 [&>select]:h-11" aria-label="分析する部位" value={effectiveBodyPart} onChange={event => chooseBodyPart(event.target.value)}>
+                  {[ALL_BODY_PARTS, ...bodyParts].map(part => <NativeSelectOption key={part} value={part}>{part === ALL_BODY_PARTS ? 'すべての部位' : part}</NativeSelectOption>)}
+                </NativeSelect>
+              </label>
+              <label className="min-w-0 text-sm font-bold">
                 <span className="mb-1.5 block text-muted-foreground">
                   分析する種目
                 </span>
                 <NativeSelect
-                  className="w-full min-w-0 [&>select]:h-11 sm:w-72"
+                  className="w-full min-w-0 [&>select]:h-11"
                   value={selectedExercise.exerciseId}
                   onChange={(event) => onSelectExercise(event.target.value)}
                   aria-label="分析する種目"
@@ -272,6 +286,7 @@ export function AnalyticsDataView({
                   ))}
                 </NativeSelect>
               </label>
+              </div>
             </div>
 
             <Card className="rounded-3xl py-5 shadow-none">
@@ -521,12 +536,9 @@ export function AnalyticsDataView({
                 <button
                   key={bodyPart}
                   type="button"
-                  aria-pressed={bodyPartFilter === bodyPart}
+                  aria-pressed={effectiveBodyPart === bodyPart}
                   onClick={() => {
-                    setBodyPartFilter(bodyPart);
-                    const candidates = filterAnalyticsExercises(exercises, bodyPart);
-                    const next = candidates.find(item => item.exerciseId === selectedExerciseId) ?? candidates[0];
-                    if (next) onSelectExercise(next.exerciseId);
+                    chooseBodyPart(bodyPart);
                   }}
                   className="min-h-11 shrink-0 rounded-full border px-4 text-sm font-bold text-muted-foreground transition aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground"
                 >

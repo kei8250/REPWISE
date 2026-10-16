@@ -100,3 +100,35 @@ describe('shared exercise-specific RM conversion', () => {
     );
   });
 });
+
+it('includes pre-goal squat records and converts them into the target rep count', () => {
+  const squat: TrainingGoal = {
+    ...goal,
+    exerciseName: 'バックスクワット',
+    rmMethod: 'squat_deadlift',
+    targetLoadGrams: 180000,
+    targetReps: 1,
+  };
+  const records = [
+    point(160000, 3, '2026-09-10'),
+    point(250000, 3, '2026-11-01'),
+  ];
+  const single = goalProgress(squat, records, '2026-10-16');
+  expect(single.actual?.localDate).toBe('2026-09-10');
+  expect(single.currentLoadGrams).toBeCloseTo(174414.4144, 3);
+  expect(single.percent).toBe(96.9);
+  const five = goalProgress(
+    { ...squat, targetLoadGrams: 170000, targetReps: 5 },
+    records,
+    '2026-10-16',
+  );
+  expect(five.currentLoadGrams).toBeCloseTo(
+    (160000 * (1 + 3 / 33.3)) / (1 + 5 / 33.3),
+  );
+  expect(five.percent).toBe(89.2);
+  expect(five.achieved).toBe(false);
+  expect(
+    goalProgress(squat, [point(180000, 1, '2026-09-10')], '2026-10-16')
+      .achieved,
+  ).toBe(true);
+});

@@ -279,7 +279,11 @@ export function GoalsDashboard() {
                     ? '期限を迎えました'
                     : '挑戦中';
           return (
-            <Card key={goal.id} className="rounded-3xl shadow-none">
+            <Card
+              id={`goal-${goal.id}`}
+              key={goal.id}
+              className="scroll-mt-5 rounded-3xl shadow-none"
+            >
               <CardContent className="space-y-4 pt-5">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -335,7 +339,7 @@ export function GoalsDashboard() {
                         <p className="mt-2 text-xs text-muted-foreground">
                           {progress.actual
                             ? `${progress.actual.localDate}：${kg(progress.actual.loadGrams)} × ${progress.actual.bestReps}回`
-                            : '開始日以降の該当実績はまだありません。開始値を表示しています。'}
+                            : '換算できる過去の実績がまだありません。開始値は計画のみに使用します。'}
                         </p>
                       </div>
                       <div className="rounded-2xl bg-primary/5 p-4">
@@ -461,7 +465,7 @@ export function GoalsDashboard() {
           );
         })}
       <p className="text-xs leading-relaxed text-muted-foreground">
-        RM換算達成率は開始日以降の完了済みセットの推定1RMを、目標重量・目標回数の推定1RMで割って計算します。実測達成は目標重量と目標回数を両方満たした記録で別判定します。削除した記録やウォームアップは含みません。左右別種目は片側の重量・左右の少ない方の回数で比較します。
+        RM換算達成率は過去の完了済みセットの推定1RMを、目標重量・目標回数の推定1RMで割って計算します。実測達成は目標重量と目標回数を両方満たした記録で別判定します。削除した記録やウォームアップは含みません。左右別種目は片側の重量・左右の少ない方の回数で比較します。
       </p>
     </div>
   );

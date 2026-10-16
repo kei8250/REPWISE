@@ -139,8 +139,8 @@ export function HomeV2() {
       >
         入力途中の記録を一覧で整理 <ArrowRight className="size-4" />
       </a>
-      <WorkoutCalendar />
       <HomeGoalProgress />
+      <WorkoutCalendar />
       <HomeAnalyticsSection
         showPeriodMetrics={false}
         state={analyticsState}

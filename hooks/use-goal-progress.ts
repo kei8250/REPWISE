@@ -26,7 +26,7 @@ function snapshot() {
     return 'unavailable';
   }
 }
-export function useGoalProgress(exerciseId?: string) {
+export function useSavedGoals() {
   const raw = useSyncExternalStore(subscribe, snapshot, () => null);
   const saved = useMemo(() => {
     try {
@@ -35,6 +35,10 @@ export function useGoalProgress(exerciseId?: string) {
       return { goals: [], error: true };
     }
   }, [raw]);
+  return saved;
+}
+export function useGoalProgress(exerciseId?: string) {
+  const saved = useSavedGoals();
   const goals = saved.goals.filter(
     (g) =>
       g.status !== 'archived' && (!exerciseId || g.exerciseId === exerciseId),

@@ -11,8 +11,7 @@ export function RmProgressEvidence({
   return (
     <div className="space-y-1 text-xs text-muted-foreground">
       <p>
-        {RM_METHODS[progress.method].label} ·
-        開始後の最高推定1RMで比較（1〜12回）
+        {RM_METHODS[progress.method].label} · 過去の最高推定1RMで比較（1〜12回）
       </p>
       {progress.currentRmGrams && progress.targetRmGrams ? (
         <p>
@@ -23,7 +22,13 @@ export function RmProgressEvidence({
         <p>
           {!progress.targetRmGrams
             ? '目標が13回以上のためRM換算は対象外です。'
-            : '開始日以降にRM換算できる記録がまだありません。'}
+            : 'RM換算できる過去の記録がまだありません。'}
+        </p>
+      )}
+      {progress.percent !== null && (
+        <p>
+          目標の{progress.targetReps}回に換算：{kg(progress.currentLoadGrams)} ÷{' '}
+          {kg(progress.targetLoadGrams)} ＝ {progress.percent}%（推定）
         </p>
       )}
       {progress.actual && (

@@ -17,14 +17,16 @@ export const APP_ROUTES = {
 export const PRIMARY_NAVIGATION = [
   { key: 'home', href: APP_ROUTES.home, label: 'ホーム' },
   { key: 'newWorkout', href: APP_ROUTES.newWorkout, label: '記録する' },
-  { key: 'history', href: APP_ROUTES.history, label: '履歴' },
   { key: 'goals', href: APP_ROUTES.goals, label: '目標設定' },
+  { key: 'analytics', href: APP_ROUTES.analytics, label: '詳細分析' },
+] as const;
+export const SECONDARY_NAVIGATION = [
+  { key: 'history', href: APP_ROUTES.history, label: '履歴' },
   { key: 'settings', href: APP_ROUTES.settings, label: '設定' },
 ] as const;
-
 export const DESKTOP_NAVIGATION = [
   ...PRIMARY_NAVIGATION,
-  { key: 'analytics', href: APP_ROUTES.analytics, label: '詳細分析' },
+  ...SECONDARY_NAVIGATION,
 ] as const;
 
 export function workoutRoute(id: string, status: WorkoutStatus) {

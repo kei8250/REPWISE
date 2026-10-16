@@ -9,6 +9,7 @@ import {
   DESKTOP_NAVIGATION,
   navigateTo,
   PRIMARY_NAVIGATION,
+  SECONDARY_NAVIGATION,
   workoutRoute,
 } from '@/lib/routes';
 
@@ -68,21 +69,30 @@ describe('Phase 1A routing', () => {
       createElement(AppShell, null, createElement('span', null, 'content')),
     );
     const navigations = markup.match(/<nav[\s\S]*?<\/nav>/g) ?? [];
-    expect(DESKTOP_NAVIGATION.at(-1)).toEqual({
-      key: 'analytics',
-      href: '/analytics',
-      label: '詳細分析',
-    });
+    expect(PRIMARY_NAVIGATION.map((item) => item.key)).toEqual([
+      'home',
+      'newWorkout',
+      'goals',
+      'analytics',
+    ]);
+    expect(SECONDARY_NAVIGATION.map((item) => item.key)).toEqual([
+      'history',
+      'settings',
+    ]);
+    expect(navigations[1]).toContain('その他');
     expect(navigations[0]).toContain('href="/analytics"');
     expect(navigations[1]).toContain('href="/analytics"');
   });
 
   it('記録の読み込み状態にかかわらず、記録ページ全体にナビゲーションを残す', async () => {
-    const page = await ActiveWorkoutPage({ params: Promise.resolve({ id: 'missing-record' }) });
+    const page = await ActiveWorkoutPage({
+      params: Promise.resolve({ id: 'missing-record' }),
+    });
     const markup = renderToStaticMarkup(page);
     expect(markup).toContain('モバイルナビゲーション');
     expect(markup).toContain('メインナビゲーション');
-    for (const item of DESKTOP_NAVIGATION) expect(markup).toContain(`href="${item.href}"`);
+    for (const item of DESKTOP_NAVIGATION)
+      expect(markup).toContain(`href="${item.href}"`);
   });
 
   it('performs a full-page navigation to the supplied destination', () => {

@@ -54,13 +54,13 @@ describe('training goals and calendar planning', () => {
     expect(addMonths('2024-02-29', 12)).toBe('2025-02-28');
     expect(addMonths('2027-11-30', 3)).toBe('2028-02-29');
   });
-  it('requires BOTH target weight and target reps, ignoring old or future records', () => {
+  it('compares estimated capacity while requiring actual target weight and reps for achievement', () => {
     const progress = goalProgress(
       goal,
       [
         point(80000, 1),
         point(60000, 8),
-        point(100000, 10, '2026-09-30'),
+        point(50000, 10, '2026-09-30'),
         point(100000, 8, '2026-11-01'),
       ],
       '2026-10-16',

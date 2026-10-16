@@ -134,7 +134,7 @@ export function goalProgress(
     method,
   );
   const candidates = points
-    .filter((p) => p.localDate >= goal.startDate && p.localDate <= today)
+    .filter((p) => p.localDate <= today)
     .map((point) => ({
       point,
       rm: estimateRm(point.loadGrams, point.bestReps, method),
@@ -149,12 +149,7 @@ export function goalProgress(
   const best = candidates.at(0);
   const actual = best?.point ?? null;
   const currentRmGrams = best?.rm ?? null;
-  const directActual = bestGoalPerformance(
-    points,
-    goal.targetReps,
-    today,
-    goal.startDate,
-  );
+  const directActual = bestGoalPerformance(points, goal.targetReps, today);
   const current =
     currentRmGrams && targetRmGrams
       ? equivalentRmLoad(currentRmGrams, goal.targetReps, method)!
@@ -205,6 +200,8 @@ export function goalProgress(
     actual,
     currentLoadGrams: current,
     method,
+    targetReps: goal.targetReps,
+    targetLoadGrams: goal.targetLoadGrams,
     currentRmGrams,
     targetRmGrams,
     directActual,

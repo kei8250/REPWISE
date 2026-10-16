@@ -1,8 +1,5 @@
 import { AppShell } from '@/components/layout/app-shell';
 import { HomeV2 } from '@/components/home-v2';
-import { Settings } from 'lucide-react';
-import { APP_ROUTES } from '@/lib/routes';
-import { buttonVariants } from '@/components/ui/button';
 
 export default function HomePage() {
   return (
@@ -16,12 +13,6 @@ export default function HomePage() {
             今日のトレーニング
           </h1>
         </div>
-        <a
-          href={APP_ROUTES.settings}
-          className={buttonVariants({ variant: 'ghost', size: 'sm' })}
-        >
-          <Settings /> 設定
-        </a>
       </header>
       <HomeV2 />
     </AppShell>

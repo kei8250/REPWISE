@@ -71,7 +71,9 @@ describe('goal progress in home and recording', () => {
     const html = renderToStaticMarkup(createElement(HomeGoalProgress));
     expect(html).toContain('75%');
     expect(html).toContain('href="/goals"');
-    expect(html).toContain('現在 72kg ÷ 目標 96kg');
+    expect(html).toContain('最高記録 60kg × 8回');
+    expect(html).toContain('推定1RM 72kg');
+    expect(html).toContain('目標まであと77日');
   });
   it('recording separates saved progress from unsaved completed sets', () => {
     const e = exercise();

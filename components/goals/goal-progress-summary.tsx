@@ -40,9 +40,13 @@ export function HomeGoalProgress() {
           3か月・半年・1年先の目標を設定して、成長を確認しましょう。
         </p>
       ) : (
-        <div className="divide-y">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {state.goals
-            .sort((a, b) => a.deadline.localeCompare(b.deadline))
+            .sort(
+              (a, b) =>
+                Number(a.status === 'paused') - Number(b.status === 'paused') ||
+                a.deadline.localeCompare(b.deadline),
+            )
             .slice(0, 3)
             .map((goal) => {
               const progress = state.data
@@ -56,11 +60,12 @@ export function HomeGoalProgress() {
                     state.today,
                   )
                 : null;
+              const timing = progress ?? goalProgress(goal, [], state.today);
               return (
                 <a
                   key={goal.id}
-                  className="block space-y-2 py-4"
-                  href={APP_ROUTES.goals}
+                  className="block space-y-3 rounded-2xl border bg-muted/20 p-4"
+                  href={`${APP_ROUTES.goals}#goal-${encodeURIComponent(goal.id)}`}
                 >
                   <div className="flex flex-wrap justify-between gap-2 text-sm">
                     <strong>{goal.exerciseName}</strong>
@@ -80,6 +85,11 @@ export function HomeGoalProgress() {
                     目標 {kg(goal.targetLoadGrams)} × {goal.targetReps}回 ·{' '}
                     {goal.deadline}まで
                   </p>
+                  <p className="text-sm font-bold text-primary">
+                    {timing.overdue
+                      ? '期限を迎えました'
+                      : `目標まであと${timing.daysLeft}日`}
+                  </p>
                   {progress && (
                     <>
                       <progress
@@ -93,7 +103,23 @@ export function HomeGoalProgress() {
                         value={progress.barPercent}
                         max={100}
                       />
-                      <RmProgressEvidence progress={progress} />
+                      <p className="text-sm font-bold">
+                        {progress.percent === null
+                          ? '換算できる記録なし'
+                          : `目標の${goal.targetReps}回換算で ${kg(progress.currentLoadGrams)}（推定）`}
+                      </p>
+                      {progress.actual && (
+                        <p className="text-xs text-muted-foreground">
+                          最高記録 {kg(progress.actual.loadGrams)} ×{' '}
+                          {progress.actual.bestReps}回 → 推定1RM{' '}
+                          {kg(progress.currentRmGrams!)}
+                        </p>
+                      )}
+                      {progress.estimatedReached && !progress.achieved && (
+                        <p className="text-xs text-muted-foreground">
+                          換算目安に到達・実測達成はまだ
+                        </p>
+                      )}
                     </>
                   )}
                 </a>

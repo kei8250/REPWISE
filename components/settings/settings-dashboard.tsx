@@ -1,22 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { listExerciseMasters, getWorkoutSyncState } from '@/lib/workouts/api-client';
+import { listExerciseMasters } from '@/lib/workouts/api-client';
 import { updateCachedExerciseMaster } from '@/lib/workouts/exercise-master-cache';
-import { readLocalWorkoutSources, exportWorkoutRecoveryData, recoverLegacyWorkoutQueue, reconcileDeletedWorkout, repairCompletedWorkoutDraft } from '@/lib/workouts/local-drafts';
-import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import type {
   ExerciseMaster,
   UpdateExerciseMasterInput,
 } from '@/lib/workouts/types';
-import { summarizeSyncQueue } from '@/lib/workouts/sync-overview';
 import { LoadBasisSelect } from '@/components/workouts/load-basis-select';
-import { WorkoutSummaryList } from '@/components/workouts/workout-summary-list';
-import { deleteWorkoutRecord } from '@/lib/workouts/draft-deletion';
-import { syncAutomatically } from '@/lib/workouts/sync-timing';
-import { WorkoutSyncList } from './workout-sync-list';
 
 export function SettingsDashboard() {
   const [items, setItems] = useState<ExerciseMaster[]>([]);
@@ -24,46 +17,8 @@ export function SettingsDashboard() {
   const [query, setQuery] = useState('');
   const [masterError, setMasterError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [local, setLocal] = useState<Awaited<
-    ReturnType<typeof readLocalWorkoutSources>
-  > | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const refreshLocal = useCallback(
-    () =>
-      readLocalWorkoutSources().then(setLocal, (cause: unknown) =>
-        setLocalError(
-          cause instanceof Error
-            ? cause.message
-            : '端末の保存状態を取得できませんでした',
-        ),
-      ),
-    [],
-  );
-
   useEffect(() => {
     let alive = true;
-    const update = () => {
-      void readLocalWorkoutSources().then(
-        (data) => {
-          if (alive) {
-            setLocal(data);
-            setLocalError(null);
-          }
-        },
-        (cause: unknown) => {
-          if (alive)
-            setLocalError(
-              cause instanceof Error
-                ? cause.message
-                : '保存状態を取得できませんでした',
-            );
-        },
-      );
-    };
-    update();
-    window.addEventListener('repwise-sync-queue-change', update);
     void listExerciseMasters()
       .then(
         (data) => {
@@ -83,7 +38,6 @@ export function SettingsDashboard() {
       });
     return () => {
       alive = false;
-      window.removeEventListener('repwise-sync-queue-change', update);
     };
   }, []);
 
@@ -100,112 +54,9 @@ export function SettingsDashboard() {
       setLoading(false);
     }
   };
-  const retrySync = async (id: string) => {
-    setBusy(id);
-    setNotice(null);
-    try {
-      const result = await syncPendingWorkoutMutations(id, { manual: true });
-      setNotice(
-        result.failed
-          ? `同期できませんでした：${result.failed.lastError ?? '内容を確認してください'}`
-          : result.remaining
-            ? '残りの記録は自動同期を待っています。'
-            : '同期が完了しました。',
-      );
-    } catch (cause) {
-      setNotice(
-        cause instanceof Error ? cause.message : '再試行できませんでした',
-      );
-    } finally {
-      await refreshLocal();
-      setBusy(null);
-    }
-  };
-  const removeRecord = async (id: string) => {
-    const draft = local?.drafts.find(item => item.workoutId === id);
-    if (!window.confirm(`「${draft?.workout.name ?? 'この記録'}」を削除しますか？`)) return;
-    setBusy(id);
-    try {
-      await deleteWorkoutRecord(id);
-      setNotice('記録を削除しました。');
-      void syncAutomatically(id).catch(() => undefined);
-    } catch (cause) { setNotice(cause instanceof Error ? cause.message : '削除できませんでした。'); }
-    finally { await refreshLocal(); setBusy(null); }
-  };
-  const recoverRecord = async (id: string) => {
-    setBusy(id);
-    setNotice(null);
-    try {
-      await recoverLegacyWorkoutQueue();
-      const data = await readLocalWorkoutSources();
-      const draft = data.drafts.find((item) => item.workoutId === id);
-      if (!draft) throw new Error('読めない形式の記録です。端末の記録を書き出して個別の確認が必要です。');
-      const { workout: server } = await getWorkoutSyncState(id);
-      if (draft.draftStatus === 'deleted') {
-        if (!server) throw new Error('接続先に記録を確認できませんでした。記録を保護したまま、時間をおいて再確認します。');
-        if (!window.confirm(`「${server.name}」の削除を完了しますか？別の端末で更新された内容も含めて削除します。`)) return;
-        await reconcileDeletedWorkout(id, server, { draft, mutations: data.mutations.filter((item) => item.workoutId === id) });
-        const result = await syncPendingWorkoutMutations(id);
-        setNotice(result.failed ? `原本は保護済みです。${result.failed.lastError}` : '削除の復旧が完了しました。原本は書き出しに含まれます。');
-      } else if (draft.draftStatus === 'completed' && draft.workout.status !== 'completed') {
-        await repairCompletedWorkoutDraft(server ?? draft.workout);
-        const repaired = (await readLocalWorkoutSources()).drafts.find((item) => item.workoutId === id);
-        setNotice(repaired?.workout.status === 'completed' ? '完了記録の表示を復旧しました。' : '完了状態を確認できません。原本を書き出して確認してください。');
-      } else {
-        const result = await syncPendingWorkoutMutations(id, { manual: true });
-        setNotice(result.failed ? `記録は保持されています。${result.failed.lastError}` : '再試行しました。');
-      }
-    } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : '復旧できませんでした。原本は保持されています。');
-    } finally { await refreshLocal(); setBusy(null); }
-  };
-  const exportLocal = async () => {
-    try {
-      const data = await exportWorkoutRecoveryData();
-      const blob = new Blob(
-        [
-          JSON.stringify(
-            { exportedAt: new Date().toISOString(), ...data },
-            null,
-            2,
-          ),
-        ],
-        { type: 'application/json' },
-      );
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `repwise-records-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('この端末の記録を書き出しました。');
-    } catch (cause) {
-      setNotice(
-        cause instanceof Error ? cause.message : '書き出せませんでした',
-      );
-    }
-  };
   const exercise = items.find((item) => item.id === selected);
-  const queueEntries = summarizeSyncQueue(local?.drafts ?? [], local?.mutations ?? []);
-  const visibleEntries = queueEntries.filter((entry) => !entry.deleted);
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-7">
-      <details className="rounded-3xl border bg-card p-5">
-        <summary className="min-h-11 cursor-pointer py-3 text-lg font-black">不要な記録を整理</summary>
-        <p className="mt-2 mb-4 text-sm text-muted-foreground">不要な入力途中の記録を削除できます。「…」または左へスワイプで削除を選べます。変更の反映は自動で行います。</p>
-        <WorkoutSummaryList status="active" emptyMessage="入力途中の記録はありません" />
-        {queueEntries.filter(entry => !entry.deleted && ['blocked', 'conflict'].includes(entry.head.syncStatus)).map(entry => (
-          <div key={entry.id} className="mt-3 rounded-xl border p-3">
-            <p className="break-words font-bold">{entry.draft?.workout.name ?? '確認が必要な記録'}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{entry.deleted ? '記録は一覧から削除されています。自動で処理できない変更があるため、削除を確認してください。' : entry.head.lastError?.includes('HTTP 401') || entry.head.lastError?.includes('HTTP 403') ? 'ログイン状態を確認してください。記録は保護されています。' : entry.head.syncStatus === 'conflict' ? '別の端末で変更されています。必要な記録か確認してください。' : '古い入力内容に問題があります。不要ならそのまま削除できます。'}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {!entry.deleted && <Button variant="destructive" className="min-h-11" disabled={busy !== null} onClick={() => void removeRecord(entry.id)}>この記録を削除</Button>}
-              {entry.deleted && <Button variant="outline" className="min-h-11" disabled={busy !== null} onClick={() => void recoverRecord(entry.id)}>削除を完了</Button>}
-            </div>
-          </div>
-        ))}
-        {notice && <output className="mt-3 block text-sm">{notice}</output>}
-      </details>
       <section className="rounded-3xl border bg-card p-5">
         <h2 className="text-lg font-black">種目の設定</h2>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -279,55 +130,6 @@ export function SettingsDashboard() {
           </>
         )}
       </section>
-      <details className="rounded-3xl border bg-card p-5">
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-bold">詳細・トラブルシューティング</summary>
-        <h2 className="text-lg font-black">保存と同期</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          入力内容はすぐにこの端末へ保存し、入力が止まってからまとめて同期します。
-        </p>
-        {localError ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {localError}
-          </p>
-        ) : !local ? (
-          <p className="mt-3 text-sm">保存状態を確認中…</p>
-        ) : (
-          <p className="mt-3 text-sm">
-            端末の保存済み記録：
-            {
-              local.drafts.filter((item) => item.draftStatus !== 'deleted' && !item.workout.deletedAt)
-                .length
-            }
-            件 · 確認が必要な記録：{visibleEntries.length}件
-          </p>
-        )}
-        <div className="mt-4 space-y-3">
-          <WorkoutSyncList entries={visibleEntries} busy={busy} onRetry={(id) => void retrySync(id)} onRecover={(id) => void recoverRecord(id)} />
-        </div>
-        {local && (local.unreadableDrafts.length > 0 || local.unreadableMutations.length > 0) && (
-          <p role="alert" className="mt-4 text-sm text-destructive">形式を確認できない記録：{local.unreadableDrafts.length}件・変更：{local.unreadableMutations.length}件。削除せず保護しています。書き出した原本を使った個別確認が必要です。</p>
-        )}
-        {local?.drafts.filter((draft) => draft.draftStatus === 'completed' && draft.workout.status !== 'completed').map((draft) => (
-          <div key={draft.workoutId} className="mt-4 rounded-xl border p-3">
-            <p>{draft.workout.name}：完了状態の表示を確認してください。</p>
-            <Button className="mt-2 min-h-11" disabled={busy !== null} onClick={() => void recoverRecord(draft.workoutId)}>完了状態を復旧</Button>
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="outline"
-          className="mt-4 w-full"
-          onClick={() => void exportLocal()}
-        >
-          この端末の記録を書き出す
-        </Button>
-        <p className="mt-2 text-xs text-muted-foreground">
-          同期前の記録はこの端末・このサイトに保存されています。書き出したファイルにはトレーニング記録とメモが含まれます。
-        </p>
-        {notice && (
-          <output className="mt-3 block text-sm font-bold">{notice}</output>
-        )}
-      </details>
     </div>
   );
 }

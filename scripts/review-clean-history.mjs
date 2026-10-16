@@ -34,11 +34,14 @@ export async function reviewCleanHistory({ evalJs, go, reload, until, tap, type,
   check(server.get('valid-history').exercises.length===0 && server.get('valid-history').overallNote==='', 'delete_removes_record_content_without_restore_action');
   await reload(`document.querySelector('a[href="/workouts/completed-edit-cache"]')`);
   check(await evalJs(`${forbidden}&&!document.querySelector('a[href="/workouts/valid-history"]')`), 'deleted_record_stays_absent_after_reload_without_status_notices');
+  await go('/history?status=active&month=all', `document.querySelector('a[href="/workouts/active/draft-other"]')`);
+  await reload(`document.querySelector('a[href="/workouts/active/draft-other"]')`);
+  check(await evalJs(`${forbidden}&&!document.querySelector('a[href="/workouts/active/valid-history"]')&&!document.querySelector('a[href="/workouts/valid-history"]')`), 'deleted_record_absent_from_incomplete_history_after_reload');
   check(await overflow(), 'clean_history_no_horizontal_overflow_390');
   await shot(`${fixturesDir}/after-delete-390.png`);
   await go('/settings', `document.querySelector('input[aria-label="設定する種目を検索"]')`);
   await evalJs(`document.querySelectorAll('details').forEach(d=>d.open=true)`);
-  check(await evalJs(`!document.querySelector('#sync-idle')&&!document.body.textContent.includes('削除状態が未確認')&&!document.body.textContent.includes('表示してはいけない削除記録')&&!document.body.textContent.includes('削除を取り消す')`), 'settings_contains_no_sync_interval_or_deleted_state_confirmation');
+  check(await evalJs(`document.querySelectorAll('h2').length===1&&document.querySelector('h2').textContent==='種目の設定'&&!document.querySelector('details')&&!document.body.textContent.includes('同期')&&!document.body.textContent.includes('不要な記録を整理')&&!document.querySelector('#sync-idle')&&!document.body.textContent.includes('削除状態が未確認')&&!document.body.textContent.includes('表示してはいけない削除記録')&&!document.body.textContent.includes('削除を取り消す')`), 'settings_contains_only_exercise_management_without_sync_or_record_cleanup');
   await shot(`${fixturesDir}/settings-without-deleted-state-390.png`);
   await go('/workouts/valid-history', `document.body.innerText.includes('削除しました')`);
   check(await evalJs(`!document.body.innerText.includes('元に戻す')&&!document.body.innerText.includes('削除を同期')`), 'direct_deleted_url_offers_only_navigation_not_restore_or_sync_details');

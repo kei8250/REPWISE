@@ -6,6 +6,7 @@ export const APP_ROUTES = {
   history: '/history',
   activeHistory: '/history?status=active&month=all',
   analytics: '/analytics',
+  goals: '/goals',
   settings: '/settings',
   analyticsExercise: (exerciseId: string) =>
     `/analytics?exerciseId=${encodeURIComponent(exerciseId)}`,

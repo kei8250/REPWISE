@@ -1,3 +1,4 @@
+import { APP_ROUTES } from '@/lib/routes';
 import { BarChart3 } from 'lucide-react';
 import { AnalyticsDashboard } from '@/components/analytics/analytics-dashboard';
 import { AppShell } from '@/components/layout/app-shell';
@@ -20,6 +21,12 @@ export default function AnalyticsPage() {
         <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
           種目ごとの伸び、PR、部位別のトレーニング量を確認できます。
         </p>
+        <a
+          href={APP_ROUTES.goals}
+          className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-primary px-4 py-2 text-sm font-bold text-primary-foreground"
+        >
+          目標を設定・進捗を見る →
+        </a>
       </header>
       <AnalyticsDashboard />
     </AppShell>

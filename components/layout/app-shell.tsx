@@ -23,7 +23,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href);
+    href === '/' ? pathname === '/' : pathname.startsWith(href) || (href === APP_ROUTES.analytics && pathname.startsWith(APP_ROUTES.goals));
 
   return (
     <main className="min-h-screen bg-background text-foreground">

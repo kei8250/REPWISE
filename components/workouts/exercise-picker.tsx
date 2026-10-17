@@ -40,9 +40,30 @@ export function ExercisePicker({
   const [newName, setNewName] = useState('');
   const [newBodyPart, setNewBodyPart] = useState('その他');
   const [newLoadBasis, setNewLoadBasis] = useState<LoadBasis>('per_rep');
-  const [newRepMode, setNewRepMode] = useState<'standard' | 'per_side'>('standard');
+  const [newRepMode, setNewRepMode] = useState<'standard' | 'per_side'>(
+    'standard',
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewport, setViewport] = useState<{
+    height: number;
+    top: number;
+  } | null>(null);
+
+  // On mobile Safari the keyboard can shrink only the visual viewport, leaving dvh unchanged.
+  useEffect(() => {
+    if (!open || !window.visualViewport) return;
+    const visible = window.visualViewport;
+    const update = () =>
+      setViewport({ height: visible.height, top: visible.offsetTop });
+    update();
+    visible.addEventListener('resize', update);
+    visible.addEventListener('scroll', update);
+    return () => {
+      visible.removeEventListener('resize', update);
+      visible.removeEventListener('scroll', update);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -123,14 +144,24 @@ export function ExercisePicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88dvh] max-w-2xl overflow-hidden p-0">
-        <DialogHeader className="border-b px-5 pb-4 pt-5">
+      <DialogContent
+        style={
+          viewport
+            ? {
+                height: viewport.height * 0.88,
+                top: viewport.top + viewport.height / 2,
+              }
+            : undefined
+        }
+        className="h-[88dvh] min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-0 max-w-2xl overflow-hidden p-0"
+      >
+        <DialogHeader className="border-b px-5 pb-4 pt-5 pr-12">
           <DialogTitle className="text-lg font-black">種目を追加</DialogTitle>
           <DialogDescription>
             部位で絞り込み、今日行う種目を選択します。
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 overflow-y-auto px-5 pb-5">
+        <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto overscroll-y-contain px-5 py-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -140,7 +171,7 @@ export function ExercisePicker({
               className="pl-9"
             />
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="flex min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-1">
             {['すべて', ...bodyParts].map((part) => (
               <Button
                 key={part}
@@ -162,7 +193,7 @@ export function ExercisePicker({
               {error}
             </p>
           )}
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-2">
             {filtered.map((item) => {
               const selected = excludedIds.includes(item.id);
               return (
@@ -171,22 +202,25 @@ export function ExercisePicker({
                   type="button"
                   variant="outline"
                   disabled={selected}
-                  className="h-auto justify-between rounded-xl px-4 py-3 text-left"
+                  className="h-auto min-w-0 w-full justify-between whitespace-normal rounded-xl px-4 py-3 text-left"
                   onClick={() => {
                     onSelect(item);
                     onOpenChange(false);
                   }}
                 >
-                  <span>
-                    <span className="block font-bold">{item.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words [overflow-wrap:anywhere] font-bold">
+                      {item.name}
+                    </span>
                     <span className="block text-xs font-normal text-muted-foreground">
-                      {item.bodyPart}{item.repMode === 'per_side' ? ' · 左右別' : ''}
+                      {item.bodyPart}
+                      {item.repMode === 'per_side' ? ' · 左右別' : ''}
                     </span>
                   </span>
                   {selected ? (
-                    <Check className="size-4" />
+                    <Check className="size-4 shrink-0" />
                   ) : (
-                    <Plus className="size-4" />
+                    <Plus className="size-4 shrink-0" />
                   )}
                 </Button>
               );
@@ -199,13 +233,53 @@ export function ExercisePicker({
           )}
           <div className="rounded-2xl bg-muted p-4">
             <p className="mb-3 text-sm font-bold">新しい種目を作成</p>
-            <label className="mb-2 block text-sm font-bold" htmlFor="new-exercise-rep-mode">回数の記録方式</label>
-            <select id="new-exercise-rep-mode" value={newRepMode} onChange={event => setNewRepMode(event.target.value === 'per_side' ? 'per_side' : 'standard')} className="mb-3 h-11 w-full rounded-lg border bg-background px-3 text-base">
-              <option value="standard">通常 · 回数を1つ入力</option><option value="per_side">左右別 · 共通の重量と右・左の回数</option>
+            <label
+              className="mb-2 block text-sm font-bold"
+              htmlFor="new-exercise-rep-mode"
+            >
+              回数の記録方式
+            </label>
+            <select
+              id="new-exercise-rep-mode"
+              value={newRepMode}
+              onChange={(event) =>
+                setNewRepMode(
+                  event.target.value === 'per_side' ? 'per_side' : 'standard',
+                )
+              }
+              className="mb-3 h-11 w-full rounded-lg border bg-background px-3 text-base"
+            >
+              <option value="standard">通常 · 回数を1つ入力</option>
+              <option value="per_side">
+                左右別 · 共通の重量と右・左の回数
+              </option>
             </select>
-            {newRepMode === 'per_side' && <div className="mb-3"><LoadBasisSelect id="new-exercise-load-basis" value={newLoadBasis} onChange={setNewLoadBasis} /></div>}
-            <label className="mb-2 block text-sm font-bold" htmlFor="new-exercise-name">種目名</label>
-            <Textarea id="new-exercise-name" value={newName} onChange={event => setNewName(event.target.value.replace(/[\r\n]/g, ''))} placeholder="種目名" maxLength={80} rows={3} className="mb-3 min-h-24 w-full resize-y bg-background text-base leading-relaxed" />
+            {newRepMode === 'per_side' && (
+              <div className="mb-3">
+                <LoadBasisSelect
+                  id="new-exercise-load-basis"
+                  value={newLoadBasis}
+                  onChange={setNewLoadBasis}
+                />
+              </div>
+            )}
+            <label
+              className="mb-2 block text-sm font-bold"
+              htmlFor="new-exercise-name"
+            >
+              種目名
+            </label>
+            <Textarea
+              id="new-exercise-name"
+              value={newName}
+              onChange={(event) =>
+                setNewName(event.target.value.replace(/[\r\n]/g, ''))
+              }
+              placeholder="種目名"
+              maxLength={80}
+              rows={3}
+              className="mb-3 min-h-24 w-full resize-y bg-background text-base leading-relaxed"
+            />
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <select
                 value={newBodyPart}

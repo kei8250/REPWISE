@@ -1,16 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowRight, LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { normalizeRecordedWorkout } from '@/lib/workouts/instant-recording';
-import { createLocalWorkout } from '@/lib/workouts/draft';
+import {
+  createLocalWorkout,
+  createWorkoutExercise,
+} from '@/lib/workouts/draft';
 import { saveWorkoutDraftAndEnqueueMutation } from '@/lib/workouts/local-drafts';
 import { syncPendingWorkoutMutations } from '@/lib/workouts/sync-queue';
 import { APP_ROUTES, navigateTo } from '@/lib/routes';
 import { defaultWorkoutName } from '@/lib/workouts/history';
 import { useLocalToday } from '@/hooks/use-local-today';
+import { ExercisePicker } from './exercise-picker';
+import type { ExerciseMaster } from '@/lib/workouts/types';
 
 export function StartWorkoutForm() {
   const today = useLocalToday();
@@ -20,19 +25,23 @@ export function StartWorkoutForm() {
   const name = customName ?? defaultWorkoutName(localDate);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  async function start(event: React.SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const creating = useRef(false);
+  async function start(exercise: ExerciseMaster) {
+    if (creating.current) return;
+    creating.current = true;
     setLoading(true);
     setError(null);
     try {
-      const workout = normalizeRecordedWorkout(
-        createLocalWorkout({
+      const workout = normalizeRecordedWorkout({
+        ...createLocalWorkout({
           name: name.trim() || defaultWorkoutName(localDate),
           localDate,
           timezone:
             Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
         }),
-      );
+        exercises: [createWorkoutExercise(exercise, 0)],
+      });
       await saveWorkoutDraftAndEnqueueMutation(workout, 'create', {
         localUpdatedAt: workout.updatedAt,
         serverUpdatedAt: null,
@@ -42,13 +51,23 @@ export function StartWorkoutForm() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '開始できませんでした');
       setLoading(false);
+      creating.current = false;
     }
   }
   return (
     <form
-      onSubmit={(event) => void start(event)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!loading) setPickerOpen(true);
+      }}
       className="space-y-5 rounded-[28px] border bg-card p-5 shadow-sm sm:p-7"
     >
+      <ExercisePicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        excludedIds={[]}
+        onSelect={(exercise) => void start(exercise)}
+      />
       <div>
         <label htmlFor="workout-name" className="block text-sm font-bold">
           トレーニング名（任意）
